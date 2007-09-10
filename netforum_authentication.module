@@ -1,0 +1,903 @@
+<?php
+// $Id$
+
+/**
+ * Implementation of hook_menu()
+ */
+function netforum_authentication_menu($may_cache) {
+  $items = array();
+  global $user;
+  
+  if ($may_cache) {
+    $items[] = array(
+      'path' => 'admin/settings/netforum/authentication',
+      'title' => t('netFORUM user authentication'),
+      'description' => t('Set the authentication settings for netFORUM customers'),
+      'callback' => 'drupal_get_form',
+      'callback arguments' => array('netforum_auth_admin_settings'),
+      'access' => user_access('administer site configuration'),
+    );
+    
+    $items[] = array(
+      'path' => 'admin/settings/netforum/roles',
+      'title' => t('netFORUM user roles'),
+      'description' => t('Choose what site roles are given to netFORUM users'),
+      'callback' => 'drupal_get_form',
+      'callback arguments' => array('netforum_auth_role_settings'),
+      'access' => user_access('administer site configuration') || user_access('administer access control'),
+    );
+    
+    $items[] = array(
+      'path' => 'admin/user/netforumroles',
+      'title' => t('netFORUM user roles'),
+      'description' => t('Choose what site roles are given to netFORUM users'),
+      'callback' => 'drupal_get_form',
+      'callback arguments' => array('netforum_auth_role_settings'),
+      'access' => user_access('administer site configuration') || user_access('administer access control'),
+    );
+    
+    $items[] = array('path' => 'admin/settings/netforum/clearcache',
+      'title' => t('Clear xWeb request cache'),
+      'callback' => 'netforum_auth_cache_clear',
+      'access' => user_access('administer site configuration'),
+      'type' => MENU_CALLBACK,
+    );
+    
+    //here we will overwrite some special user URLs if we want to alter the behavior, if this isn't working check the load
+    // order of the modules to make sure netFORUM loads AFTER the user module.  Load order is determined by weight in the 
+    //system table and it should be set automatically on installation
+    if (strtolower(variable_get('netforum_auth_forgotten_password', '<drupal>')) != '<drupal>' || variable_get('netforum_auth_forgot_password_add', 0) == 1) {
+      $items[] = array('path' => 'user/password', 'title' => t('Request new password'),
+      'callback' => 'netforum_auth_forgotten_password_redirect', 'callback arguments' => array('user_pass'), 'access' => !$user->uid, 'type' => MENU_LOCAL_TASK);
+    }
+    
+    if (strtolower(variable_get('netforum_auth_user_register', '<drupal>')) != '<drupal>') {
+     $items[] = array('path' => 'user/register', 'title' => t('Create new account'),
+      'callback' => 'netforum_auth_user_register_redirect', 'callback arguments' => '', 'access' => !$user->uid && variable_get('user_register', 1), 'type' => MENU_LOCAL_TASK);
+    }
+    
+  }
+  else{
+    if ( (arg(0) == 'user' && is_numeric(arg(1)) && arg(1) > 0)  && $user !== FALSE) {
+      if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
+       $items[] = array('path' => 'user/'. arg(1) .'/edit', 'title' => t('Edit'),
+            'callback' => 'netforum_auth_user_editing_redirect', 'callback arguments' => '',
+            'access' => user_access('administer users') || $user->uid == arg(1), 'type' => MENU_LOCAL_TASK);
+      }
+    }
+  }
+return $items;
+}
+
+/**
+ * direct the user to the correct edit info page
+ *
+ * called by the user/ID/edit url if drupal is set to use an external site for editing user info
+ */
+function netforum_auth_user_editing_redirect() {
+  global $user;
+  if (netforum_is_empty_guid($user->cst_key) === false && strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
+    drupal_goto(variable_get('netforum_auth_user_editing', ''));
+  }
+  else { 
+    return drupal_get_form('user_edit');
+  }
+}
+
+/**
+ * direct the user to the correct forgot password page
+ *
+ * called by the user/password url if we're overwriting the default drupal behavior
+ */
+function netforum_auth_forgotten_password_redirect() {
+  if (strtolower(variable_get('netforum_auth_forgotten_password', '<drupal>')) != '<drupal>') {
+    drupal_goto(variable_get('netforum_auth_forgotten_password', ''));
+  }
+  elseif (variable_get('netforum_auth_forgot_password_add', 0) == 1) {
+    return drupal_get_form('netforum_auth_user_pass');
+  }
+  else {
+    return drupal_get_form('user_pass');
+  }
+}
+
+/**
+ * direct the user to the correct registration page
+ *
+ * called by the user/register url if we're overwriting the default drupal behavior
+ */
+function netforum_auth_user_register_redirect() {
+  if (strtolower(variable_get('netforum_auth_user_register', '<drupal>')) != '<drupal>') {
+    drupal_goto(variable_get('netforum_auth_user_register', ''));
+  }
+  else {
+    return drupal_get_form('user_register');
+  }
+}
+
+
+/**
+ * The user password form 
+ *
+ * This is called by the netforum_auth_forgotten_password_redirect function if they want to allow users who have
+ * not logged in to request a password.  Really we overwrite it because we want our own validation form.
+ * @ingroup forms
+ */
+function netforum_auth_user_pass() {
+  $form = user_pass() ;
+  $form['#validate'] = array('netforum_auth_user_pass_validate' => array());
+  $form['#submit'] = array('user_pass_submit' => array());
+  return $form;
+}
+
+/**
+ * Add the user if they exist in netFORUM when validating the login form
+ *
+ * This is a modified version of the regular user_pass_validate function that
+ * does the additional step of checking to see if the user exists in netFORUM, and if they do
+ * then it creates a new drupal user and declares netforum_authentication to be the authentication
+ * module.  That way they can reset their password if using drupal's password reset function
+ */
+function netforum_auth_user_pass_validate($form_id, $form_values) {
+  $name = $form_values['name'];
+  $account = user_load(array('mail' => $name, 'status' => 1));
+  if (!$account) {
+    $account = user_load(array('name' => $name, 'status' => 1));
+  }
+  if (!$account) {
+    $query = array('szObjectName' => 'Customer @TOP 1',
+        'szColumnList' => 'cst_type, cst_web_login, cst_eml_address_dn',
+        'szWhereClause' => "cst_web_login is not null AND cst_web_login != '' AND (cst_eml_address_dn  = '$name' OR cst_web_login = '$name')",
+        'szOrderBy' => '');
+    $response = netforum_xweb_request('GetQuery', $query);
+    if ($response && $response->attributes()->recordReturn == 1) {
+      $cst_obj = $response->CustomerObject;
+      $cst_name = (string)$cst_obj->cst_web_login;
+      $cst_mail = (string)$cst_obj->cst_eml_address_dn;
+      $cst_type = (string)$cst_obj->cst_type;
+      $cst_key = (string)$cst_obj->cst_key;
+      //adapted from user_authenticate in the user module to add a new user
+      $userinfo = array('name' => $cst_name, 'mail' => $cst_mail, 'pass' => user_password(), 'cst_key' => $cst_key, 'cst_type' => $cst_type, 'init' => $name, 'status' => 1);
+      $userinfo["authname_netforum_authentication"] = $name;
+      $account = user_save('', $userinfo);
+      watchdog('user', t('New external user: %user using module %module.', array('%user' => $name, '%module' => 'netforum_authentication')), WATCHDOG_NOTICE, l(t('edit'), 'user/'. $user->uid .'/edit'));
+    }
+  }
+  if ($account->uid) {
+    form_set_value(array('#parents' => array('account')), $account);
+  }
+  else {
+    form_set_error('name', t('Sorry, %name is not recognized as a user name or an email address.', array('%name' => $name)));
+  }
+}
+
+
+/**
+ * Define the admin settings form
+ * @ingroup forms
+ */
+function netforum_auth_admin_settings() {
+  
+  $form['settings'] = array(
+    '#title' => "User authentication settings",
+    '#type' => 'fieldset',
+    '#description' => t("Determine what parts of user authentication and information drupal is responsible for."),
+  );
+  
+  $form['settings']['netforum_auth_user_register'] = array(
+    '#title' => t('New User Registration'),
+    '#type' => 'textfield',
+    '#description' => t('Enter the URL users should be redirected to when they click on create new account.  This can be an external URL or a drupal node, such as node/newuserinfo.  Enter <drupal> to use the defaul drupal new user screen'),
+    '#size' => 40,
+    '#required' => TRUE,
+    '#default_value' => variable_get('netforum_auth_user_register', '<drupal>'),
+  );
+  
+  $form['settings']['netforum_auth_forgotten_password'] = array(
+    '#title' => t('Forgotten Passwords'),
+    '#type' => 'textfield',
+    '#description' => t('Enter the URL users should be redirected to to reset their password, or &lt;drupal&gt; to use built in functionality at user/password.'),
+    '#size' => 40,
+    '#required' => TRUE,
+    '#default_value' => variable_get('netforum_auth_forgotten_password', '<drupal>'),
+  );
+  
+  $form['settings']['netforum_auth_forgot_password_add'] = array(
+    '#title' => t('Search netFORUM for users with forgotten passwords'),
+    '#type' => 'checkbox',
+    '#description' => t('If using drupal for forgotten passwords, should Drupal check both local users and netFORUM when looking for usernames?  If this is not checked only users who have already logged in can reset their password with Drupal.'),
+    '#size' => 40,
+    '#default_value' => variable_get('netforum_auth_forgot_password_add', 0),
+  );
+  
+  $form['settings']['netforum_auth_user_editing'] = array(
+    '#title' => t('Edit User info'),
+    '#type' => 'textfield',
+    '#description' => t('Enter the URL users should be redirected to to edit their information, or &lt;drupal&gt; to use built in functionality.  Note that this includes setting passwords and email addresses by default'),
+    '#size' => 40,
+    '#required' => TRUE,
+    '#default_value' => variable_get('netforum_auth_user_editing', '<drupal>'),
+  );
+  
+  $form['settings']['cache_clear'] = array(
+    '#title' => 'Menu troubleshooting',
+    '#type' => 'item',
+    '#description' => t('If the settings above are not working properly try '. l(t('clearing the menu cache'), 'admin/settings/netforum/clearcache')),
+  );
+  
+  $form['sso'] = array(
+    '#title' => "Single Sign On settings",
+    '#type' => 'fieldset',
+    '#description' => t("Which eWeb sites should a user automatically be logged on to when logged in to drupal?"),
+  );
+  
+  $form['sso']['netforum_auth_eweb_sso'] = array(
+    '#title' => t('eWeb Sites'),
+    '#type' => 'checkboxes',
+    '#description' => t('Select all to log users onto every eweb site in netFORUM or pick only the sites you want'),
+    '#options' => array_merge(array('ALL' => 'All eweb sites'), netforum_eweb_sites()),
+    '#default_value' => variable_get('netforum_auth_eweb_sso', array()),
+  );
+  
+  $form['sso']['netforum_auth_cookie_domain'] = array(
+    '#title' => t('SSO Cookie domain'),
+    '#type' => 'textfield',
+    '#description' => t('To use SSO both eWeb and your drupal installation must share the same top level domain (tld).  For example, if you have drupal running www.example.com then the address for eWeb needs to be something that ends in example.com like store.example.com and this field should be set to .example.com'),
+    '#size' => 40,
+    '#default_value' => variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']),
+  );
+  
+  $form['sso']['netforum_auth_sso_logout_url'] = array(
+    '#title' => t('SSO logout URL'),
+    '#type' => 'textfield',
+    '#description' => t('When a user logs out of drupal any netFORUM cookies set for the domain above will be deleted, but the user can also be directed to a url that will log them out of eWeb such as http://eweb.example.com/eWeb/Logout.aspx .  If this is set to &lt;drupal&gt; then only the cookies will be removed, and the user will be logged out of eWeb when they close the browser.'),
+    '#validate' => array('netforum_valid_sso_logout' => array()),
+    '#size' => 40,
+    '#default_value' => variable_get('netforum_auth_sso_logout_url', '<drupal>'),
+  );
+    
+  return system_settings_form($form);
+}
+
+/**
+ * The form describing netforum user roles
+ *
+ * @ingroup forms
+ */
+function netforum_auth_role_settings() {
+  $ignore_roles = netforum_auth_ignore_roles();
+  
+  $form['desc'] = array(
+    '#type' => 'item',
+    '#description' => t('For each of the following roles on the drupal website, identify which individual or organizations should receive those roles'),
+  );
+  
+  $form['#submit'] = array('netforum_auth_role_settings_submit' => array());
+  
+  $categories = netforum_auth_categories();
+  $netforum_auth_roles = variable_get('netforum_auth_roles',array_keys(user_roles(1)));
+  // This iterates only on the roles we are NOT ignoring, by default this is authenticated and anonymous
+  foreach (array_diff_key(user_roles(), $ignore_roles) as $rid => $role) {
+    $form[$rid] = array(
+      '#title' => $role,
+      '#type' => 'fieldset',
+      '#description' => t("Which netFORUM users are assigned to the drupal site role %role ?", array('%role' => $role) ),
+      '#collapsible' => TRUE, 
+      '#collapsed' => TRUE,
+    );
+    $form[$rid]["netforum_auth_roles_$rid"] = array(
+      '#title' => 'Netforum Types',
+      '#type' => 'checkboxes',
+      '#options' => $categories,
+      '#default_value' => $netforum_auth_roles[$rid],
+    );
+  }
+  
+  $form['buttons']['submit'] = array('#type' => 'submit', '#value' => t('Save configuration') );
+  $form['buttons']['reset'] = array('#type' => 'submit', '#value' => t('Reset to defaults') );
+
+  if (!empty($_POST) && form_get_errors()) {
+    drupal_set_message(t('The settings have not been saved because of the errors.'), 'error');
+  }
+  $form['#base'] = 'system_settings_form';
+  
+  return $form;
+}
+
+function netforum_auth_role_settings_submit($form_id, $form_values){
+  $netforum_auth_roles = array();
+  
+  foreach (array_diff_key(user_roles(), netforum_auth_ignore_roles()) as $rid => $role) {
+    $element = 'netforum_auth_roles_'. $rid;
+    $netforum_auth_roles[$rid] = array();
+    if (isset($form_values[$element]) && is_array($form_values[$element])) {
+      foreach ($form_values[$element] as $nf_key => $check_val) {
+        if ((string)$nf_key == (string)$check_val && netforum_is_empty_guid($nf_key) == FALSE){
+          $netforum_auth_roles[$rid][] = $nf_key;
+        }
+      }
+    }
+  }
+  
+  variable_set('netforum_auth_roles', $netforum_auth_roles);
+  drupal_set_message(t('The configuration options have been saved.'));
+  //drupal_set_message(print_r($form_id,true));
+  //drupal_set_message(print_r($form_values,true));
+  //drupal_set_message( print_r($_POST, true));
+}
+
+/**
+ * Validate the sso logout url option
+ */
+function netforum_valid_sso_logout($form = null) {
+  if ($form == null) {
+    return;
+  }
+  $url = $form['#post']['netforum_auth_sso_logout_url'];
+  if (strtolower(trim($url)) != '<drupal>' && valid_url($url, true) == false) {
+    form_set_error('netforum_auth_sso_logout_url', t('Valid sso logout URL required'));
+  }
+}
+
+/**
+ * clear the menu cache and redirect to netforum settings
+ *
+ */
+function netforum_auth_cache_clear() {
+  cache_clear_all('*', 'cache_menu', TRUE);
+  drupal_set_message(t('Menu cache cleared.'));
+  drupal_goto('admin/settings/netforum');
+}
+
+/**
+* Implementation of hook_auth() 
+ *
+ * uses xWeb to get an auth token, returns true if the token is set,
+ * false if the token is empty (eg, all zeroes)
+ *
+ * Also intercepts all login requests with an email address associated and 
+ * authenticates against netFORUM.  Local users should have no @ sign in their
+ * username
+ */
+function netforum_authentication_auth($username, $password, $server) {
+
+  if ($server != '') {
+    $username .= "@$server";
+  }
+  
+  $result = netforum_xweb_request("WebLogin", array("userLoginPlain" => $username,
+      "passwordPlain" => $password,
+      "keyOverride" => ""));
+		
+  if (is_null($result) || isset($result->WebLoginResult) === false ) {
+    //try local authentication juuuust in case xWeb is unavailable
+    $result = db_query("SELECT uid FROM users WHERE name='%s' AND cst_web_password = '%s'", $username, netforum_auth_hash_pw($password));
+    if (db_num_rows($result) > 0) {
+      return true;
+    }
+    else {
+      drupal_set_message(t('Could not communicate with authentication server, please try again in a few minutes'), 'error');
+      watchdog('netforum', t("Could not authenticate user %username because the xweb query returned a null result - is the server available and responsive?", array('%username' => $username)), WATCHDOG_ERROR);
+      return false;
+    }
+  }
+  
+  
+  $auth_token = $result->WebLoginResult;
+
+  if (netforum_is_empty_guid($auth_token)) {
+    return FALSE;
+  }
+  else {
+    global $_netforum_auth_token;
+    $_netforum_auth_token = $auth_token;
+    return TRUE;
+  }
+  
+}
+
+/**
+ * Implementation of hook_info()
+ * 
+ */
+function netforum_authentication_info($field = 0) {
+  $info['name'] = 'netFORUM';
+  $info['protocol'] = 'SOAP';
+
+  if ($field) {
+    return $info[$field];
+  }
+  else {
+    return $info;
+  }
+} 
+
+/**
+ * Implementation of hook_user()
+ * 
+ */
+function netforum_authentication_user($op, &$edit, &$account, $category = NULL) {
+  global $user;
+  switch ($op) {
+    case 'load': 
+      //we do a lot on load because whenever a user is displayed, logged in, or worked with they should have the most up to date information, 
+      //which means getting all of their data from netFORUM
+      if (!netforum_is_empty_guid($account->cst_key)) { 
+        if ($_SESSION['netforum_auth_skip_info_sync'] !== true) {
+          global $_netforum_auth_fresh_user_categories, $_netforum_auth_already_checked_roles;
+          $ignore_roles = netforum_auth_ignore_roles();
+          $new_info = array();
+          
+          
+          $netforum_roles = netforum_auth_map_user_roles($account->cst_key);
+          //If there is no response from xweb we get an empty array, this is to prevent us from mistaing no response for no roles or entering an infinite update loop
+          if ($_netforum_auth_fresh_user_categories === true && $_netforum_auth_already_checked_roles !== true) { 
+            //these are the roles that are checked off on the site's user edit page, not set via netForum.
+            $sticky_roles = array();
+            
+            if (is_array($account->netforum_auth_admin_set_roles)) {
+              $sticky_roles = array_diff_key($account->netforum_auth_admin_set_roles, $netforum_roles);  //take out the roles that are being set by netforum
+              $sticky_roles = array_diff_key($sticky_roles, $ignore_roles); //take out the roles like authenticated user
+              //no, not the delicious kind of sticky roles.
+              
+              if ($sticky_roles != $account->netforum_auth_admin_set_roles) {
+                //if the netforum roles now include a role that was sticky it's removed from the sticky roles and is no longer given to the user by the sticky roles.
+                //That way, when netforum stops returning that role, then it will also dissapear from their account.
+                $new_info['netforum_auth_admin_set_roles'] = $sticky_roles;
+              }
+            }
+            
+            //Now we need to look at the current user roles (from the db) and compare them to the combined netforum roles and sticky roles. 
+            //if they are different, update the roles and save them to the database.
+            $combined_roles = $sticky_roles + $netforum_roles; 
+            
+            //just to make sure that that the roles we're comparing are the actual values from site, eg if the name of the role was changed
+            $site_roles = user_roles(true);
+            array_walk($combined_roles, create_function('&$v, $k, &$roles', '$v = $roles[$k];'), $site_roles); 
+            
+            //If there is some change, store them in the database.  This way, if xWeb is unavailable we can still give the user appropriate permissions
+            if ($combined_roles != array_diff_key($account->roles, $ignore_roles)) {
+              $new_info['roles'] = $combined_roles;
+            }
+            $_netforum_auth_already_checked_roles = true;
+          } //end ofthe roles checking and assigning
+            
+          
+          //check to see if the web login or email address are different from the information in the DB
+          $query = Array('szObjectName' => 'Customer',
+                'szColumnList' => 'cst_eml_address_dn, cst_web_force_password_change, cst_web_password, cst_id',
+                'szWhereClause' => "cst_key = '". $account->cst_key ."'",
+                'szOrderBy' => '');
+          $response = netforum_xweb_request('GetQuery', $query, '2 seconds'); //do not look for cached results to this query longer than this request
+          
+          if ($result && $result->attributes()->recordReturn == 1) {
+            $cst_obj = $response->CustomerObject; 
+            $email = (string)$cst_obj->cst_eml_address_dn;
+        
+            if ($account->mail != $email ) {
+              $new_info['mail'] = $email;
+            }
+        
+            $cst_web_password = (string)$cst_obj->cst_web_password;
+            if ($account->cst_web_password != $cst_web_password) {
+              $new_info['cst_web_password'] = $cst_web_password;
+            }
+        
+            $cst_id = (string)$cst_obj->cst_id;
+            if ($account->cst_id != $cst_id) {
+              $new_info['cst_id'] = $cst_id;
+            }
+            
+            if ((int)$cst_obj->cst_web_force_password_change == 1) {
+              global $_netforum_auth_must_change_pw;
+              $_netforum_auth_must_change_pw = true;
+            }
+          }
+        
+          if (count($new_info) > 0) {
+            user_save($account, $new_info);
+          }
+        }
+      }
+      break;
+      
+    case 'login':
+      global $_netforum_auth_must_change_pw;
+      if ($_netforum_auth_must_change_pw === true) {
+        $current_path = isset($_GET['q']) ? $_GET['q'] : '';
+        $edit_path = 'user/'. $account->uid .'/edit';
+        if ($current_path != $edit_path && ($user->uid == $account->uid)) {
+          drupal_set_message('Your password needs to be reset, please do so now by clicking '. l('here', $edit_path), 'error');
+        }
+      }
+      if (netforum_is_empty_guid($account->cst_key) === false) {
+        netforum_auth_eweb_sso_login();
+      }
+      break;
+      
+    case 'logout':
+      if (netforum_is_empty_guid($account->cst_key) === false) {
+        netforum_auth_eweb_sso_logout();
+      }
+      break;
+      
+    case 'insert':
+      global $_netforum_auth_token, $_netforum_auth_cst_key;
+      if (netforum_is_empty_guid($_netforum_auth_token) === false ) {
+        $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_netforum_auth_token));
+        if (is_null($result) || isset($result->WebValidateResult) === false ) {
+          drupal_set_message(t('Could not fetch netFORUM information for new user'), 'error');
+          break;
+        }
+        else {
+          $_netforum_auth_cst_key =  (string)$result->WebValidateResult;
+          $_netforum_auth_token = null; //unset this so we don't keep calling xweb
+        }
+	
+        if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) {
+          $nf_user_data = array();
+          $query = Array('szObjectName' => 'Customer',
+                  'szColumnList' => 'cst_type, cst_eml_address_dn, cst_web_password, cst_id',
+                  'szWhereClause' => "cst_key = '". $_netforum_auth_cst_key ."'",
+                  'szOrderBy' => '');
+          $response = netforum_xweb_request('GetQuery', $query);
+          if (isset($response) && $response->attributes()->recordReturn == 1) {
+            $cst_obj = $response->CustomerObject;
+            $nf_user_data = Array(
+              'cst_key' => $_netforum_auth_cst_key,
+              'mail' => (string)$cst_obj->cst_eml_address_dn,
+              'cst_type' => (string)$cst_obj->cst_type,
+              'cst_id' => (string)$cst_obj->cst_id,
+              'cst_web_password' => (string)$cst_obj->cst_web_password,
+            );
+            $edit['cst_web_password'] = (string)$cst_obj->cst_web_password;
+          }
+          else {
+            $nf_user_data['cst_key'] = $_netforum_auth_cst_key;
+          }
+          
+          user_save($account, $nf_user_data);
+        }
+      }
+      break;
+      
+    case 'update':
+      if ( netforum_is_empty_guid($account->cst_key) === false) { 
+        //this array keeps key => value pairs to correspond to the netFORUM information to be updated.
+        $nf_variables = array();
+        if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) == '<drupal>') {
+          if (isset($edit['mail']) && $edit['mail'] != '' && $edit['mail'] != $account->mail) {
+            $nf_variables['eml_address'] = $edit['mail'];
+          }
+          if (isset($edit['pass']) && $edit['pass'] != '') {
+            $nf_variables['cst_web_password'] = $edit['pass'];
+            $nf_variables['cst_web_force_password_change'] = 0;
+            //Save cst_web_password because we use it if the user is logging in and xWeb is not available.  
+            $edit['cst_web_password'] = netforum_auth_hash_pw($edit['pass']);
+          }
+          if (isset($edit['name']) && $edit['name'] != '' && $edit['name'] != $account->name) {
+            $nf_variables['cst_web_login'] = $edit['name'];
+          }
+        }
+
+        if (count($nf_variables) > 0) {
+          $success = false; //don't assume it worked by default, this is set on success below
+          if ($account->cst_type == 'Individual') { //this way customers and individuals can log in and edit info.  Beware when setting variables above that they are cst_type agnostic
+            $data_node = netforum_ind_info_parameters($nf_variables);
+            $response = netforum_xweb_request('SetIndividualInformation', array('IndividualKey' => $account->cst_key, 'oUpdateNode' => $data_node));
+            if (isset($response) && $response->attributes()->recordReturn == 1 && $response->IndividualObject->ind_cst_key == $account->cst_key) {
+              $success = true;
+            }
+          }
+          elseif ($account->cst_type == 'Organization') {
+            $data_node = netforum_org_info_parameters($nf_variables);
+            $response = netforum_xweb_request('SetOrganizationInformation', array('OrganizationKey' => $account->cst_key, 'oUpdateNode' => $data_node));
+            if ( isset($response) && $response->attributes()->recordReturn == 1 && $response->OrganizationObject->org_cst_key == $account->cst_key) {
+              $success = true;
+            }
+          }
+	    
+          if ($success === false) {
+            drupal_set_message(t('Information update failed, please try again in a few minutes.'), 'error');
+            watchdog('netforum', t("Could not update user information in netFORUM for %name", array('%name' => $account->name)), WATCHDOG_ERROR);
+            $path = isset($_GET['q']) ? $_GET['q'] : '';
+            $query = drupal_query_string_encode($_GET, array('q'));
+            if ($query != '') {
+              $path .= '?'. $query;
+            } 
+            drupal_goto($path);
+          }
+          else {
+            $_SESSION['netforum_auth_skip_info_sync'] = true;
+          }
+        }
+
+        if (isset($edit['roles']) ) {
+          //keep track of any roles set in case it was set by an admin.  If the admin added a role that doesn't get set via netforum remember that and
+          //add / save it in when the user is loaded.  If the role is later something gets set for this user via netforum, then when it is removed (ie, no longer
+          //set via netforum) it will also be removed from the user record.  That means you can make the website override netforum, but if netforum later gives that
+          //permission it will be taken away when netforum also takes it away.
+           
+          //what's the phrase?  Store em all and let the load sort it out?
+          $edit['netforum_auth_admin_set_roles'] = $edit['roles'];
+        }
+      }
+      
+      break;
+      
+    case 'after_update':
+      if (isset($_SESSION['netforum_auth_skip_info_sync']) && $_SESSION['netforum_auth_skip_info_sync'] === true) {
+        unset($_SESSION['netforum_auth_skip_info_sync']);
+      }
+      break;
+      
+    default:
+      break;
+  }
+}
+
+/**
+ * Fetch the netforum criteria for assigning users to groups
+ *
+ * This function should return an associative array of netFORUM keys and
+ * descrptions that will be used to determine what drupal roles map to 
+ * what netFORUM roles.  For example, member types or committes.
+ *
+ * To assign users to groups based on something other than membership the first
+ * step is to add a query here that will pull the keys and the display name for the
+ * criteria
+ *
+ * @return
+ *    Returns an associative array of netforum keys corresponding to descriptions
+ */
+function netforum_auth_categories() {
+  $categories = array();
+  $query_params = array(
+    'szObjectName' => 'mb_member_type',
+    'szColumnList' => 'mbt_key, mbt_code',
+    'szWhereClause' => 'mbt_delete_flag = 0',
+    'szOrderBy' => 'mbt_code asc',
+  );
+    
+  $response = netforum_xweb_request("GetQuery", $query_params);
+  
+  if (isset($response->attributes()->recordReturn) AND $response->attributes()->recordReturn > 0 ) {
+    foreach ($response->mb_member_typeObject as $mbt) {
+      $categories[(string)$mbt->mbt_key] = $mbt->mbt_code;
+    }
+  }
+  
+  //if you want to add more ways to map from netFORUM customer to drupal login, rinse and repeat adding more key/value pairs to the $categories array
+  
+  return $categories;
+}
+
+/**
+ * Fetch the list of groups that a user is in
+ *
+ *  This function is the alternate side of the netforum_auth_categories function().  It should return
+ *  an array of keys for a given user that correspond to the keys returned in netforum_auth_categories
+ *  Any keys that match will be used to map the netFORUM user to the drupal user roles, so if it isn't included
+ *  here they won't have that role on the site
+ *
+ * @param $cst_key
+ *    A string containing a valid customer key from netFORUM
+ * @return
+ *    An array of netforum keys that correspond to the options presented in netforum_auth_categories()
+ */
+function netforum_auth_user_categories($cst_key = '') {
+  global $_netforum_auth_fresh_user_categories;
+  $_netforum_auth_fresh_user_categories= false;
+  $user_categories = array();
+  if ($cst_key == '') {
+    return $user_categories;
+  }
+  
+  $query_params = array(
+    'szObjectName' => 'MembershipProxy',
+    'szColumnList' => 'mbt_key, mbt_code',
+    'szWhereClause' => "cst_key = '". $cst_key ."' AND (mbr_expire_date <= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
+    'szOrderBy' => 'mbt_code asc',
+  );
+  
+  
+  $response = netforum_xweb_request("GetQuery", $query_params);
+  
+  if (isset($response) AND $response->attributes()->recordReturn > 0 ) {
+    $_netforum_auth_fresh_user_categories = true;
+    foreach ($response->MembershipProxyObject as $mpr) {
+      $user_categories[] = (string)$mpr->mbt_key;
+    }
+  }
+  
+  //if you want to add more categories, rinse and repeat tacking more GUIDs onto the $user_categories array
+  return $user_categories;
+}
+
+/**
+ * Match netforum criteria to drupal site roles
+ *
+ * this function gets the netFORUM keys associated with the user, and the roles out of drupal
+ * and if some match, then they're returned as drupal roles
+ *
+ * @param $cst_key
+ *    A string containing a valid customer key from netFORUM
+ * @return
+ *    An array of role ids mapped to role descriptions
+ */
+function netforum_auth_map_user_roles($cst_key = '') {
+  $user_roles = array();
+  if ($cst_key == '') {
+    return $user_roles;
+  }
+  
+  $user_categories = netforum_auth_user_categories($cst_key);
+  
+  if (count($user_categories) == 0) {
+    return $user_roles;
+  }
+  
+  $system_roles = user_roles(1);
+  $netforum_auth_roles = variable_get("netforum_auth_roles", array()); 
+  foreach ($system_roles as $rid=>$role) {
+    if (array_key_exists($rid, $netforum_auth_roles) && count(array_intersect($netforum_auth_roles[$rid], $user_categories)) > 0 ) {
+      $user_roles[$rid] = $role;
+    }
+  }
+  
+  //at the end, this user_roles array looks like the drupal $user->roles value
+  return $user_roles;
+}
+
+/**
+ * Fetch a list of eWeb sites in netFORUM
+ *
+ * @param $sitecode_only = FALSE
+ *    Set to true to only return the sitecodes instead of sitecodes and descriptions
+ * @return
+ *    A hashed array of keys and descriptions
+ *
+ */
+function netforum_eweb_sites($sitecode_only = false) {
+  $eweb_sites = array();
+  
+  $query_params = array(
+    'szObjectName' => 'WebSite',
+    'szColumnList' => 'web_key, web_code, web_description',
+    'szWhereClause' => "web_delete_flag != 1",
+    'szOrderBy' => 'web_code asc',
+  );
+  
+  
+  $response = netforum_xweb_request("GetQuery", $query_params);
+  
+  if (isset($response) AND $response->attributes()->recordReturn > 0 ) {
+    foreach ($response->WebSiteObject as $web) {
+      $eweb_sites[(string)$web->web_key] = $web->web_code;
+      if ($sitecode_only === false) {
+        $eweb_sites[(string)$web->web_key] .= ": ". $web->web_description;
+      }
+    }
+  }
+  
+  //if you want to add more categories, rinse and repeat tacking more GUIDs onto the $user_categories array
+  return $eweb_sites;
+}
+
+/**
+ * Set the needed cookies to log the user into the specified eWeb sites
+ *
+ */
+function netforum_auth_eweb_sso_login() {
+  global $user;
+  if ( netforum_is_empty_guid($user->cst_key) ) {
+    return false;
+  }
+  
+  if ( isset($user->cst_web_password) === false || $user->cst_web_password == '') {
+    watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_web_password associated with user', array('%user' => $user->name)), WATCHDOG_WARNING);
+    return false;
+  }
+  if ( isset($user->cst_id) === false || $user->cst_id == '') {
+    watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_id associated with user', array('%user' => $user->name)), WATCHDOG_WARNING);
+    return false;
+  }
+  
+  $selected_sites = variable_get('netforum_auth_eweb_sso', array());
+  $do_it_all = false;
+  if ( isset($selected_sites['ALL']) && ($selected_sites['ALL'] == 'ALL' || $selected_sites['ALL'] == 1)) {
+    $do_it_all = true;
+  }
+  //we pass true to the eweb_sites function to get only the web code and not the entire description
+  foreach (netforum_eweb_sites(true) as $web_key => $web_code) {
+    if ($selected_sites[$web_key] == $web_key || $do_it_all === true || $selected_sites[$web_key] == 1) {
+      setcookie($web_code .'cstid', $user->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setcookie($web_code .'pw', $user->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    }
+  }
+}
+
+/**
+ * Delete the cookies set for SSO login and optionally direct the user to the eWeb logout page
+ */
+function netforum_auth_eweb_sso_logout() {
+  foreach (netforum_eweb_sites(true) as $web_key => $web_code) {
+    setcookie($web_code .'cstid', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    setcookie($web_code .'pw', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+  }
+  if (strtolower(variable_get('netforum_auth_sso_logout_url', '<drupal>')) != '<drupal>') {
+    global $base_url;
+    drupal_goto(variable_get('netforum_auth_sso_logout_url', '') ."?RedirectURL=$base_url");
+  }
+}
+
+/**
+ * Returns the modified md5 hash that will match the cst_web_password field from netFORUM
+ *
+ * @param $password
+ *    A string representing the plaintext password
+ * @return
+ *    A string representing the hashed password
+ */
+function netforum_auth_hash_pw($password = '') {
+  $password = md5($password);
+  $nfhash = "";
+  for ($i=0; $i<strlen($nfhash); $i++) {
+    $c = substr($nfhash, $i, 1);
+    if ($c != "0" || ($i % 2) != 0) {
+      $nfhash .= $c;
+    }
+  }
+  return $nfhash;
+}
+
+/**
+ * Fetch the list of site roles to ignore when assigning users to groups
+ *
+ * @return
+ *    An array of role IDs mapped to descriptions
+ */
+function netforum_auth_ignore_roles() {
+  //We use this in two places, when setting the roles and when assigning netforum users to roles.  
+  //sure, it could be a global but what if there's some criteria we want to impose later?
+  return array(DRUPAL_AUTHENTICATED_RID => '', DRUPAL_ANONYMOUS_RID => '');
+}
+
+/**
+ * Implementation of hook_help()
+ */
+function netforum_authentication_help($section) {
+switch ($section) {
+    //case 'admin/help/netforum_authentication':
+    case 'admin/help#netforum_authentication':
+      $output = t('
+<p>
+This module attempts to log in each user against the netFORUM database set up in the netFORUM module using xWeb.  Each user that logs in to the site will be added to the list of local users along with some key details from netFORUM.
+</p>
+
+<p>
+<ul>
+<li>If the user has already logged in and has a local record, they will be logged in against the cached password of xWeb is unavailable.  </li>
+<li>For new users, forgotten passwords, or user edit information the user can optionally be directed to an external webpage on eWeb</li>
+<li>Depending on the setup, users with forgotten passwords can be automatically added to the list of known users on the site and emailed a temporary password</li>
+<li>If the xWeb user has write access to the customer information, when a user edits their information the changes (email or username) will be pushed to netFORUM</li>
+<li>Administrators can still edit the roles for an individual user, but they cannot take away any roles assigned by netFORUM.  This is useful for hand selecting users to be in groups
+  or allowing temporary access to restricted areas.</li>
+</p>
+
+<p> 
+If setting the redirect pages does not result in a redirect, try clearing the !cache_clear.
+</p>
+
+<p>
+<strong>Set up</strong>
+<p>
+
+<p>
+Visit the !netforum_auth_settings_page to configure the module, and the !netforum_auth_roles_page to assign site roles to the users. You must have the netFORUM xWeb module installed and configured to work.
+</p>
+
+', array('!cache_clear' => l(t('menu cache'), 'admin/settings/netforum/clearcache'), '!netforum_auth_settings_page' => l(t('netFORUM Authentication settings page'), 'admin/settings/netforum/authentication'), '!netforum_auth_roles_page' => l(t('netFORUM User Roles'), 'admin/settings/netforum/roles')));
+      return $output;
+  }
+}
