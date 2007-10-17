@@ -47,5 +47,6 @@ function netforum_authentication_uninstall() {
   variable_del('netforum_auth_eweb_sso');
   variable_del('netforum_auth_cookie_domain');
   variable_del('netforum_auth_sso_logout_url');
+  variable_del('netforum_auth_roles');
   drupal_set_message(t('Netforum Authentication module has been successfully uninstalled.'));
 }

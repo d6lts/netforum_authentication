@@ -10,7 +10,7 @@ function netforum_authentication_menu($may_cache) {
   
   if ($may_cache) {
     $items[] = array(
-      'path' => 'admin/settings/netforum/authentication',
+      'path' => 'admin/user/netforum-authentication',
       'title' => t('netFORUM user authentication'),
       'description' => t('Set the authentication settings for netFORUM customers'),
       'callback' => 'drupal_get_form',
@@ -19,16 +19,7 @@ function netforum_authentication_menu($may_cache) {
     );
     
     $items[] = array(
-      'path' => 'admin/settings/netforum/roles',
-      'title' => t('netFORUM user roles'),
-      'description' => t('Choose what site roles are given to netFORUM users'),
-      'callback' => 'drupal_get_form',
-      'callback arguments' => array('netforum_auth_role_settings'),
-      'access' => user_access('administer site configuration') || user_access('administer access control'),
-    );
-    
-    $items[] = array(
-      'path' => 'admin/user/netforumroles',
+      'path' => 'admin/user/netforum-roles',
       'title' => t('netFORUM user roles'),
       'description' => t('Choose what site roles are given to netFORUM users'),
       'callback' => 'drupal_get_form',
@@ -187,7 +178,7 @@ function netforum_auth_admin_settings() {
   $form['settings']['netforum_auth_user_register'] = array(
     '#title' => t('New User Registration'),
     '#type' => 'textfield',
-    '#description' => t('Enter the URL users should be redirected to when they click on create new account.  This can be an external URL or a drupal node, such as node/newuserinfo.  Enter <drupal> to use the defaul drupal new user screen'),
+    '#description' => t('Enter the URL users should be redirected to when they click on create new account.  This can be an external URL or a drupal node, such as node/newuserinfo.  Enter &lt;drupal&gt; to use the defaul drupal new user screen'),
     '#size' => 40,
     '#required' => TRUE,
     '#default_value' => variable_get('netforum_auth_user_register', '<drupal>'),
@@ -451,7 +442,8 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             //if they are different, update the roles and save them to the database.
             $combined_roles = $sticky_roles + $netforum_roles; 
             
-            //just to make sure that that the roles we're comparing are the actual values from site, eg if the name of the role was changed
+            //just to make sure that that the roles we're comparing are the actual values from site, eg if the name of the role was changed, 
+	    //we use array_walk to replace the values of our combined roles array with the freshest site values based on the id
             $site_roles = user_roles(true);
             array_walk($combined_roles, create_function('&$v, $k, &$roles', '$v = $roles[$k];'), $site_roles); 
             
@@ -834,6 +826,8 @@ function netforum_auth_eweb_sso_logout() {
 /**
  * Returns the modified md5 hash that will match the cst_web_password field from netFORUM
  *
+ * Thanks to Ford Parsons by way of Darryl Hopkins for the function
+ *
  * @param $password
  *    A string representing the plaintext password
  * @return
@@ -897,7 +891,7 @@ If setting the redirect pages does not result in a redirect, try clearing the !c
 Visit the !netforum_auth_settings_page to configure the module, and the !netforum_auth_roles_page to assign site roles to the users. You must have the netFORUM xWeb module installed and configured to work.
 </p>
 
-', array('!cache_clear' => l(t('menu cache'), 'admin/settings/netforum/clearcache'), '!netforum_auth_settings_page' => l(t('netFORUM Authentication settings page'), 'admin/settings/netforum/authentication'), '!netforum_auth_roles_page' => l(t('netFORUM User Roles'), 'admin/settings/netforum/roles')));
+', array('!cache_clear' => l(t('menu cache'), 'admin/settings/netforum/clearcache'), '!netforum_auth_settings_page' => l(t('netFORUM Authentication settings page'), 'admin/user/netforum-authentication'), '!netforum_auth_roles_page' => l(t('netFORUM User Roles'), 'admin/user/netforum-roles')));
       return $output;
   }
 }

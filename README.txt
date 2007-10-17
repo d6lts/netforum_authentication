@@ -1,5 +1,8 @@
 README
 
+Thanks to everyone at Avectra for helping out with my questions on this, 
+including but not limited to Kerim Guc, Darryl Hopkins, Devin Dasbach, and Ford Parsons
+
 The authentication module provides the following key functions:
 
 - allows netForum customers with a web username and password to log in

@@ -2,5 +2,4 @@
 name = netFORUM Authentication
 description = Allows users to authenticate against netFORUM via xweb 
 dependencies = netforum
-version = "5.x-0.1-dev"
 package = "netFORUM"
