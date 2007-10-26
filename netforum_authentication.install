@@ -5,7 +5,7 @@
 *  Implementation of hook_install
 */
 
-function netforum_authentication_install (){
+function netforum_authentication_install() {
   // Drop module weight so we can override user paths
   $weight = (int)db_result(db_query("SELECT weight FROM {system} WHERE name = 'user'"));
   db_query("UPDATE {system} SET weight = %d WHERE name = 'netforum_authentication'", $weight + 1);
@@ -19,10 +19,10 @@ function netforum_authentication_install (){
     case 'mysqli':
 
       db_query("ALTER TABLE {users} ADD (
-	cst_key varchar(36),
-	cst_type varchar(100),
-	cst_id varchar(10),
-	cst_web_password varchar(36)
+          cst_key varchar(36),
+          cst_type varchar(100),
+          cst_id varchar(10),
+          cst_web_password varchar(36)
         );");
       
        $success = TRUE; 

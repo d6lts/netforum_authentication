@@ -148,7 +148,7 @@ function netforum_auth_user_pass_validate($form_id, $form_values) {
       $cst_type = (string)$cst_obj->cst_type;
       $cst_key = (string)$cst_obj->cst_key;
       //adapted from user_authenticate in the user module to add a new user
-      $userinfo = array('name' => $cst_name, 'mail' => $cst_mail, 'pass' => user_password(), 'cst_key' => $cst_key, 'cst_type' => $cst_type, 'init' => $name, 'status' => 1);
+      $userinfo = array('name' => $cst_name, 'mail' => $cst_mail, 'pass' => user_password(), 'cst_key' => $cst_key, 'cst_type' => $cst_type, 'init' => $name, 'status' => 1 );
       $userinfo["authname_netforum_authentication"] = $name;
       $account = user_save('', $userinfo);
       watchdog('user', t('New external user: %user using module %module.', array('%user' => $name, '%module' => 'netforum_authentication')), WATCHDOG_NOTICE, l(t('edit'), 'user/'. $user->uid .'/edit'));
@@ -226,7 +226,7 @@ function netforum_auth_admin_settings() {
     '#title' => t('eWeb Sites'),
     '#type' => 'checkboxes',
     '#description' => t('Select all to log users onto every eweb site in netFORUM or pick only the sites you want'),
-    '#options' => array_merge(array('ALL' => 'All eweb sites'), netforum_eweb_sites()),
+    '#options' => array_merge(array('ALL' => 'All eweb sites'), netforum_auth_eweb_sites()),
     '#default_value' => variable_get('netforum_auth_eweb_sso', array()),
   );
   
@@ -266,7 +266,7 @@ function netforum_auth_role_settings() {
   $form['#submit'] = array('netforum_auth_role_settings_submit' => array());
   
   $categories = netforum_auth_categories();
-  $netforum_auth_roles = variable_get('netforum_auth_roles',array_keys(user_roles(1)));
+  $netforum_auth_roles = variable_get('netforum_auth_roles', array_keys(user_roles(1)));
   // This iterates only on the roles we are NOT ignoring, by default this is authenticated and anonymous
   foreach (array_diff_key(user_roles(), $ignore_roles) as $rid => $role) {
     $form[$rid] = array(
@@ -277,7 +277,7 @@ function netforum_auth_role_settings() {
       '#collapsed' => TRUE,
     );
     $form[$rid]["netforum_auth_roles_$rid"] = array(
-      '#title' => 'Netforum Types',
+      '#title' => 'netFORUM Types',
       '#type' => 'checkboxes',
       '#options' => $categories,
       '#default_value' => $netforum_auth_roles[$rid],
@@ -295,16 +295,16 @@ function netforum_auth_role_settings() {
   return $form;
 }
 
-function netforum_auth_role_settings_submit($form_id, $form_values){
+function netforum_auth_role_settings_submit($form_id, $form_values) {
   $netforum_auth_roles = array();
   
   foreach (array_diff_key(user_roles(), netforum_auth_ignore_roles()) as $rid => $role) {
     $element = 'netforum_auth_roles_'. $rid;
     $netforum_auth_roles[$rid] = array();
     if (isset($form_values[$element]) && is_array($form_values[$element])) {
-      foreach ($form_values[$element] as $nf_key => $check_val) {
-        if ((string)$nf_key == (string)$check_val && netforum_is_empty_guid($nf_key) == FALSE){
-          $netforum_auth_roles[$rid][] = $nf_key;
+      foreach ($form_values[$element] as $key => $check_val) {
+        if ((string)$key == (string)$check_val) {
+          $netforum_auth_roles[$rid][] = $key;
         }
       }
     }
@@ -312,9 +312,6 @@ function netforum_auth_role_settings_submit($form_id, $form_values){
   
   variable_set('netforum_auth_roles', $netforum_auth_roles);
   drupal_set_message(t('The configuration options have been saved.'));
-  //drupal_set_message(print_r($form_id,true));
-  //drupal_set_message(print_r($form_values,true));
-  //drupal_set_message( print_r($_POST, true));
 }
 
 /**
@@ -415,21 +412,21 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       //which means getting all of their data from netFORUM
       if (!netforum_is_empty_guid($account->cst_key)) { 
         if ($_SESSION['netforum_auth_skip_info_sync'] !== true) {
-          global $_netforum_auth_fresh_user_categories, $_netforum_auth_already_checked_roles;
+          global $_netforum_auth_already_checked_roles;
           $ignore_roles = netforum_auth_ignore_roles();
           $new_info = array();
           
           
-          $netforum_roles = netforum_auth_map_user_roles($account->cst_key);
+          $netforum_roles = netforum_auth_map_user_roles($account);
           //If there is no response from xweb we get an empty array, this is to prevent us from mistaing no response for no roles or entering an infinite update loop
-          if ($_netforum_auth_fresh_user_categories === true && $_netforum_auth_already_checked_roles !== true) { 
+          if (netforum_auth_fresh_user_categories() === true && $_netforum_auth_already_checked_roles !== true) { 
             //these are the roles that are checked off on the site's user edit page, not set via netForum.
             $sticky_roles = array();
+            //no, not the delicious kind of sticky roles.
             
             if (is_array($account->netforum_auth_admin_set_roles)) {
               $sticky_roles = array_diff_key($account->netforum_auth_admin_set_roles, $netforum_roles);  //take out the roles that are being set by netforum
               $sticky_roles = array_diff_key($sticky_roles, $ignore_roles); //take out the roles like authenticated user
-              //no, not the delicious kind of sticky roles.
               
               if ($sticky_roles != $account->netforum_auth_admin_set_roles) {
                 //if the netforum roles now include a role that was sticky it's removed from the sticky roles and is no longer given to the user by the sticky roles.
@@ -440,10 +437,10 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             
             //Now we need to look at the current user roles (from the db) and compare them to the combined netforum roles and sticky roles. 
             //if they are different, update the roles and save them to the database.
-            $combined_roles = $sticky_roles + $netforum_roles; 
+            $combined_roles = array_merge($sticky_roles, $netforum_roles); 
             
             //just to make sure that that the roles we're comparing are the actual values from site, eg if the name of the role was changed, 
-	    //we use array_walk to replace the values of our combined roles array with the freshest site values based on the id
+            //we use array_walk to replace the values of our combined roles array with the freshest site values based on the id
             $site_roles = user_roles(true);
             array_walk($combined_roles, create_function('&$v, $k, &$roles', '$v = $roles[$k];'), $site_roles); 
             
@@ -455,34 +452,31 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
           } //end ofthe roles checking and assigning
             
           
-          //check to see if the web login or email address are different from the information in the DB
+          $cst_fields = netforum_auth_user_fields();
+          //check to see if  any of the customer fields are different from the information in the DB
           $query = Array('szObjectName' => 'Customer',
-                'szColumnList' => 'cst_eml_address_dn, cst_web_force_password_change, cst_web_password, cst_id',
+                'szColumnList' => implode(", ", $cst_fields),
                 'szWhereClause' => "cst_key = '". $account->cst_key ."'",
                 'szOrderBy' => '');
-          $response = netforum_xweb_request('GetQuery', $query, '2 seconds'); //do not look for cached results to this query longer than this request
-          
-          if ($result && $result->attributes()->recordReturn == 1) {
+          $response = netforum_xweb_request('GetQuery', $query, '3 seconds'); //do not look for cached results to this query longer than this request
+          if ($response && $response->attributes()->recordReturn == 1) {
             $cst_obj = $response->CustomerObject; 
+            
             $email = (string)$cst_obj->cst_eml_address_dn;
-        
             if ($account->mail != $email ) {
               $new_info['mail'] = $email;
-            }
-        
-            $cst_web_password = (string)$cst_obj->cst_web_password;
-            if ($account->cst_web_password != $cst_web_password) {
-              $new_info['cst_web_password'] = $cst_web_password;
-            }
-        
-            $cst_id = (string)$cst_obj->cst_id;
-            if ($account->cst_id != $cst_id) {
-              $new_info['cst_id'] = $cst_id;
             }
             
             if ((int)$cst_obj->cst_web_force_password_change == 1) {
               global $_netforum_auth_must_change_pw;
               $_netforum_auth_must_change_pw = true;
+            }
+            
+            foreach ($cst_fields as $field) {
+              $field_value = (string)$cst_obj->{$field};
+              if ($account->{$field} != $field_value) {
+                $new_info[$field] = $field_value;
+              }
             }
           }
         
@@ -635,32 +629,37 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
  * descrptions that will be used to determine what drupal roles map to 
  * what netFORUM roles.  For example, member types or committes.
  *
- * To assign users to groups based on something other than membership the first
- * step is to add a query here that will pull the keys and the display name for the
- * criteria
+ * To assign users to groups based on something other than membership create
+ * a module that implements hook_netforum_auth_categories.
+ *
+ * Remember to cast all associatve array keys to strings before storing in the array
  *
  * @return
- *    Returns an associative array of netforum keys corresponding to descriptions
+ *    Returns an associative array of unique keys corresponding to descriptions
  */
-function netforum_auth_categories() {
+function netforum_auth_categories() {  
   $categories = array();
-  $query_params = array(
-    'szObjectName' => 'mb_member_type',
-    'szColumnList' => 'mbt_key, mbt_code',
-    'szWhereClause' => 'mbt_delete_flag = 0',
-    'szOrderBy' => 'mbt_code asc',
-  );
-    
-  $response = netforum_xweb_request("GetQuery", $query_params);
-  
-  if (isset($response->attributes()->recordReturn) AND $response->attributes()->recordReturn > 0 ) {
-    foreach ($response->mb_member_typeObject as $mbt) {
-      $categories[(string)$mbt->mbt_key] = $mbt->mbt_code;
-    }
+  // If no modules implement the netforum_auth_categories hook, set it to be based on membership
+  if ( count(module_implements('netforum_auth_categories')) == 0 ) {
+	  $query_params = array(
+	    'szObjectName' => 'mb_member_type',
+	    'szColumnList' => 'mbt_key, mbt_code',
+	    'szWhereClause' => 'mbt_delete_flag = 0',
+	    'szOrderBy' => 'mbt_code asc',
+	  );
+	    
+	  $response = netforum_xweb_request("GetQuery", $query_params);
+	  
+	  if (isset($response->attributes()->recordReturn) AND $response->attributes()->recordReturn > 0 ) {
+	    foreach ($response->mb_member_typeObject as $mbt) {
+	      $categories[(string)$mbt->mbt_key] = $mbt->mbt_code;
+	    }
+	  }
   }
-  
-  //if you want to add more ways to map from netFORUM customer to drupal login, rinse and repeat adding more key/value pairs to the $categories array
-  
+  else {
+    //Call the hook_netforum_auth_user_categories.
+    $categories = module_invoke_all('netforum_auth_categories');
+  }
   return $categories;
 }
 
@@ -672,38 +671,76 @@ function netforum_auth_categories() {
  *  Any keys that match will be used to map the netFORUM user to the drupal user roles, so if it isn't included
  *  here they won't have that role on the site
  *
- * @param $cst_key
- *    A string containing a valid customer key from netFORUM
+ * Remember to cast all associatve array keys to strings before storing in the array
+ *
+ * @param $account
+ *    The user object for the user logging in
  * @return
  *    An array of netforum keys that correspond to the options presented in netforum_auth_categories()
  */
-function netforum_auth_user_categories($cst_key = '') {
-  global $_netforum_auth_fresh_user_categories;
-  $_netforum_auth_fresh_user_categories= false;
+function netforum_auth_user_categories($account) {
   $user_categories = array();
-  if ($cst_key == '') {
+  if (isset($account->cst_key) == false || netforum_is_valid_guid($account->cst_key) == false) {
     return $user_categories;
   }
   
-  $query_params = array(
-    'szObjectName' => 'MembershipProxy',
-    'szColumnList' => 'mbt_key, mbt_code',
-    'szWhereClause' => "cst_key = '". $cst_key ."' AND (mbr_expire_date <= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
-    'szOrderBy' => 'mbt_code asc',
-  );
   
+  // If no modules implement the hook, set it to be based on membership
+  if ( count(module_implements('netforum_auth_user_categories')) == 0 ) {
+    $query_params = array(
+      'szObjectName' => 'MembershipProxy',
+      'szColumnList' => 'mbt_key, mbt_code',
+      'szWhereClause' => "cst_key = '". $account->cst_key ."' AND (mbr_expire_date <= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
+      'szOrderBy' => 'mbt_code asc',
+    );
+    
+    $response = netforum_xweb_request("GetQuery", $query_params);
+    
+    if (isset($response) AND $response->attributes()->recordReturn > 0 ) {
+      netforum_auth_fresh_user_categories(true);
+      foreach ($response->MembershipProxyObject as $mpr) {
+        $user_categories[] = (string)$mpr->mbt_key;
+      }
+    }
+  }
+  else {
+    // call the hook_netforum_auth_user_categories function in any modules that implement it. 
+    // Remember that each module that implements this must also call netforum_auth_fresh_user_categories($is_fresh_response) 
+    // and specify if the user categories are valid or not. 
+    $user_categories = module_invoke_all('netforum_auth_user_categories', $account );
+  }
   
-  $response = netforum_xweb_request("GetQuery", $query_params);
-  
-  if (isset($response) AND $response->attributes()->recordReturn > 0 ) {
-    $_netforum_auth_fresh_user_categories = true;
-    foreach ($response->MembershipProxyObject as $mpr) {
-      $user_categories[] = (string)$mpr->mbt_key;
+  return $user_categories;
+}
+
+/**
+ * Find out or specify if the recent user categories are considered valid
+ *
+ * This function is used to differentiate between a user being assigned no valid
+ * roles, and xWeb being unavailable.  In the former case, the existing roles should be
+ * unmapped from the Drupal database, in the latter the user should be allowed to log
+ * in and work in the previously assigned user roles.
+ *
+ * Any hook_netforum_auth_user_categories() function should call this with true or false,
+ * failure to do so will prevent the user roles from being applied to the user.
+ *
+ * @param $is_fresh_response
+ *    Optional, a boolean to set if a valid response was returned from xWeb
+ * @return
+ *    A boolean with the current status
+ */
+function netforum_auth_fresh_user_categories($is_fresh_response = null) {
+  static $fresh_categories = null;
+  if (is_null($is_fresh_response) == false) {
+    if (is_null($fresh_categories)) {
+      $fresh_categories = $is_fresh_response;
+    }
+    else {
+      $fresh_categories = $fresh_categories && $is_fresh_response;
     }
   }
   
-  //if you want to add more categories, rinse and repeat tacking more GUIDs onto the $user_categories array
-  return $user_categories;
+  return is_null($fresh_categories) ? false : $fresh_categories;
 }
 
 /**
@@ -712,18 +749,18 @@ function netforum_auth_user_categories($cst_key = '') {
  * this function gets the netFORUM keys associated with the user, and the roles out of drupal
  * and if some match, then they're returned as drupal roles
  *
- * @param $cst_key
- *    A string containing a valid customer key from netFORUM
+ * @param $account
+ *    The user object
  * @return
  *    An array of role ids mapped to role descriptions
  */
-function netforum_auth_map_user_roles($cst_key = '') {
+function netforum_auth_map_user_roles($account) {
   $user_roles = array();
-  if ($cst_key == '') {
+  if (isset($account->cst_key) == false || netforum_is_valid_guid($account->cst_key) == false) {
     return $user_roles;
   }
   
-  $user_categories = netforum_auth_user_categories($cst_key);
+  $user_categories = netforum_auth_user_categories($account);
   
   if (count($user_categories) == 0) {
     return $user_roles;
@@ -750,7 +787,7 @@ function netforum_auth_map_user_roles($cst_key = '') {
  *    A hashed array of keys and descriptions
  *
  */
-function netforum_eweb_sites($sitecode_only = false) {
+function netforum_auth_eweb_sites($sitecode_only = false) {
   $eweb_sites = array();
   
   $query_params = array(
@@ -801,7 +838,7 @@ function netforum_auth_eweb_sso_login() {
     $do_it_all = true;
   }
   //we pass true to the eweb_sites function to get only the web code and not the entire description
-  foreach (netforum_eweb_sites(true) as $web_key => $web_code) {
+  foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
     if ($selected_sites[$web_key] == $web_key || $do_it_all === true || $selected_sites[$web_key] == 1) {
       setcookie($web_code .'cstid', $user->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
       setcookie($web_code .'pw', $user->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
@@ -813,7 +850,7 @@ function netforum_auth_eweb_sso_login() {
  * Delete the cookies set for SSO login and optionally direct the user to the eWeb logout page
  */
 function netforum_auth_eweb_sso_logout() {
-  foreach (netforum_eweb_sites(true) as $web_key => $web_code) {
+  foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
     setcookie($web_code .'cstid', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     setcookie($web_code .'pw', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
   }
@@ -855,6 +892,45 @@ function netforum_auth_ignore_roles() {
   //We use this in two places, when setting the roles and when assigning netforum users to roles.  
   //sure, it could be a global but what if there's some criteria we want to impose later?
   return array(DRUPAL_AUTHENTICATED_RID => '', DRUPAL_ANONYMOUS_RID => '');
+}
+
+/*
+ * Fetch a list of Customer fields to be included and saved with the user object
+ *
+ * The user fields must exist in the Customer object
+ *
+ * @return
+ *    An array of field names
+ */
+function netforum_auth_user_fields() {
+  static $field_names_cache = array();
+  if ( count($field_names_cache) > 0) {
+    return $field_names_cache;
+  }
+  
+  // Fetch all field names, removing duplicates
+  $field_names = array_unique(module_invoke_all('netforum_auth_user_fields'));
+  
+  $object_fields = netforum_object_fields('Customer');
+  // Only return the fields that available to the Customer object
+  $field_names = array_intersect($field_names, array_keys($object_fields));
+  
+  $field_names_cache = $field_names;
+  
+  return $field_names;
+}
+
+/*
+ * Implementation of hook_netforum_auth_user_fields
+ *
+ * Any fields specified here must exist in the Customer object and will be loaded and
+ * stored with the user on load if changed in netforum
+ *
+ * @return 
+ *    An array of field names
+ */
+function netforum_authentication_netforum_auth_user_fields() {
+  return array('cst_eml_address_dn', 'cst_web_force_password_change', 'cst_web_password', 'cst_id');
 }
 
 /**

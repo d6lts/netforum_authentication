@@ -1,0 +1,9 @@
+Changes from 5.x-0.8
+- Removed role mappings on uninstall
+- Removed admin/settings/netforum/roles from menu, wrong place for it
+- Moved admin/settings/netforum/authentication to the user section
+- Corrected help text on authentication settings form
+- Added an API for user roles and customer fields
+- Fixed bug in user load that prevented refreshing netFORUM details
+- Renamed netforum_eweb_sites to netforum_auth_eweb_sites
+- Use array_merge instead of array addition
