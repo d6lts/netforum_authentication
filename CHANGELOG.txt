@@ -1,3 +1,6 @@
+Changes from 5.x-0.8-5
+- Fixed bug in queries to respect drupal table prefixing
+
 Changes from 5.x-0.8
 - Removed role mappings on uninstall
 - Removed admin/settings/netforum/roles from menu, wrong place for it

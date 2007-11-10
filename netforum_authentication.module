@@ -359,7 +359,7 @@ function netforum_authentication_auth($username, $password, $server) {
 		
   if (is_null($result) || isset($result->WebLoginResult) === false ) {
     //try local authentication juuuust in case xWeb is unavailable
-    $result = db_query("SELECT uid FROM users WHERE name='%s' AND cst_web_password = '%s'", $username, netforum_auth_hash_pw($password));
+    $result = db_query("SELECT uid FROM {users} WHERE name='%s' AND cst_web_password = '%s'", $username, netforum_auth_hash_pw($password));
     if (db_num_rows($result) > 0) {
       return true;
     }
