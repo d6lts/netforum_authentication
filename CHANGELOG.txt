@@ -1,3 +1,7 @@
+Changes from 5.x-0.8-6
+- Fixed bug in determing default member categories
+- Added support for cross-domain SSO if multiple drupal sites are running the module
+
 Changes from 5.x-0.8-5
 - Fixed bug in queries to respect drupal table prefixing
 

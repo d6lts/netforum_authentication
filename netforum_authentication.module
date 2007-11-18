@@ -1,6 +1,16 @@
 <?php
 // $Id$
 
+
+
+// This is used for the shared SSO, since the user redirects after login we have to pause a beat before
+// including the magic link in the page
+if ($_SESSION['netforum_auth_link']) {
+  drupal_add_link($_SESSION['netforum_auth_link']);
+  unset($_SESSION['netforum_auth_link']);
+}
+
+
 /**
  * Implementation of hook_menu()
  */
@@ -28,11 +38,26 @@ function netforum_authentication_menu($may_cache) {
     );
     
     $items[] = array('path' => 'admin/settings/netforum/clearcache',
-      'title' => t('Clear xWeb request cache'),
+      'title' => t('Clear menu cache'),
       'callback' => 'netforum_auth_cache_clear',
       'access' => user_access('administer site configuration'),
       'type' => MENU_CALLBACK,
     );
+    
+    $items[] = array('path' => 'user/netforum_sso_check',
+      'title' => t('netFORM Authentication Shared SSO Check'),
+      'callback' => 'netforum_auth_shared_sso_check',
+      'access' => true,
+      'type' => MENU_CALLBACK,
+    );
+    
+    $items[] = array('path' => 'user/netforum_sso_share',
+      'title' => t('netFORM Authentication Shared SSO'),
+      'callback' => 'netforum_auth_shared_sso_login',
+      'access' => true,
+      'type' => MENU_CALLBACK,
+    );
+    
     
     //here we will overwrite some special user URLs if we want to alter the behavior, if this isn't working check the load
     // order of the modules to make sure netFORUM loads AFTER the user module.  Load order is determined by weight in the 
@@ -168,7 +193,6 @@ function netforum_auth_user_pass_validate($form_id, $form_values) {
  * @ingroup forms
  */
 function netforum_auth_admin_settings() {
-  
   $form['settings'] = array(
     '#title' => "User authentication settings",
     '#type' => 'fieldset',
@@ -246,8 +270,66 @@ function netforum_auth_admin_settings() {
     '#size' => 40,
     '#default_value' => variable_get('netforum_auth_sso_logout_url', '<drupal>'),
   );
-    
+  
+  $form['sso']['netforum_auth_shared_sso'] = array(
+    '#title' => t('Allow other drupal sites to share this domain for SSO'),
+    '#type' => 'checkbox',
+    '#description' => t("Sometimes users might log into another website running Drupal with a different domain than eWeb, in that case SSO won't work.  Checking this will allow other websites to use this site and domain for logging in to eWeb."),
+    '#default_value' => variable_get('netforum_auth_shared_sso', 0),
+  );
+  
+  $form['sso']['netforum_auth_shared_sso_secret'] = array(
+    '#title' => t('Shared secret password'),
+    '#type' => 'textfield',
+    '#description' => t('Both sites sharing a domain for SSO must have the same shared secret password.  This is used to help ensure that only authorized sites can log users on.'),
+    '#default_value' => variable_get('netforum_auth_shared_sso_secret', ''),
+    '#size' => 40,
+  );
+  
+  $form['sso']['netforum_auth_shared_sso_url'] = array(
+    '#title' => t('Shared SSO url'),
+    '#type' => 'textfield',
+    '#description' => t('To use another website for eWeb SSO, enter the URL of the site here.  The website must also have netFORUM Authentication enabled, a shared key, and allowing other sites must be checked.  The cookie domain and eweb site settings listed above will be ignored, and the settings on the remote site will be used instead.'),
+    '#default_value' => variable_get('netforum_auth_shared_sso_url', ''),
+    '#size' => 40,
+  );
+
   return system_settings_form($form);
+}
+
+function netforum_auth_admin_settings_validate($form_id, $form_values) {
+  if (($form_values['netforum_auth_shared_sso'] == 1 || $form_values['netforum_auth_shared_sso_url'] != '') && trim($form_values['netforum_auth_shared_sso_secret']) == '' ) {
+    form_set_error('netforum_auth_shared_sso_secret', t('The shared secret is required when using this domain for shared sso'));
+  }
+  else {
+    $secret_okay = true;
+  }
+  
+  if (trim($form_values['netforum_auth_shared_sso_url']) != ''  && substr($form_values['netforum_auth_shared_sso_url'], 0, 7) != 'http://' && substr($form_values['netforum_auth_shared_sso_url'], 0, 8) != 'https://') {
+    form_set_error('netforum_auth_shared_sso_url', t('Shared SSO url must start with http:// or https://'));
+  }
+  else {
+    $url_okay = true;
+  }
+  
+  if ( $secret_okay === true && $url_okay === true ) {
+    if (ini_get('allow_url_fopen')) {
+      $check_url = $form_values['netforum_auth_shared_sso_url'];
+      if (substr($check_url, -1) != '/') {
+        $check_url .= "/";
+      }
+      $token = md5("netFORUMAUTHINTERNAL". $form_values['netforum_auth_shared_sso_secret']);
+      $check_url .= "user/netforum_sso_check/". $token;
+      $remote_site_response = file_get_contents($check_url);
+      if (stristr($remote_site_response, "<checkresult>1</checkresult>") === FALSE) {
+        form_set_error('form', t("The shared SSO site either could not be reached or the shared secret didn't match."));
+      }
+    }
+  }
+  
+  if (strtolower($form_values['netforum_auth_user_register']) != '<drupal>' || strtolower($form_values['netforum_auth_forgotten_password']) != '<drupal>' || strtolower($form_values['netforum_auth_user_editing']) != '<drupal>') {
+    cache_clear_all('*', 'cache_menu', TRUE);
+  }
 }
 
 /**
@@ -335,6 +417,111 @@ function netforum_auth_cache_clear() {
   cache_clear_all('*', 'cache_menu', TRUE);
   drupal_set_message(t('Menu cache cleared.'));
   drupal_goto('admin/settings/netforum');
+}
+
+/**
+ * Confirm that this site is available for shared sso and that the shared secret is valid
+ *
+ */
+function netforum_auth_shared_sso_check($token = '') {
+  $passed_check = false;
+  if (variable_get('netforum_auth_shared_sso', 0) != 0 && variable_get('netforum_auth_shared_sso_secret', '') != '') {
+    $internal_token = md5("netFORUMAUTHINTERNAL". variable_get('netforum_auth_shared_sso_secret', ''));
+    if ($internal_token == $token) {
+      $passed_check = true;
+    }
+  }
+  print "<checkresult>". $passed_check ."</checkresult>";
+  exit;
+}
+
+/**
+ * Find the username and password for the individual and log them into eweb
+ *
+ * We use two tokens to save a DB/xweb hit where not necessary, one for the password one for the cst_id
+ */
+function netforum_auth_shared_sso_login($cstid = '', $cstid_token = '', $pw_token = '') {
+  $allow_logins = variable_get('netforum_auth_shared_sso', 0);
+  $shared_secret = variable_get('netforum_auth_shared_sso_secret', '');
+  if ($allow_logins != 0 && $shared_secret != '' && $cstid != '' && $cstid_token != '') {
+    $cstid_internal_token = _netforum_auth_make_cstid_token($cstid);
+    if ($cstid_internal_token == $cstid_token) {
+      $account = new stdClass();
+      $res = db_query("SELECT cst_key, cst_id, cst_web_password FROM {users} WHERE cst_id = '%s'", $cstid);
+      if (db_num_rows($res) >= 0) {
+        while ($account = db_fetch_object($res)) {
+          if (_netforum_auth_match_password_token($account->cst_web_password, $pw_token) ) {
+            $account->name = $account->cst_id;
+            $found_user = true;
+            break;
+          }
+        }
+      }
+      else {
+        $arguments = array(
+          'szObjectName' => "Customer",
+          'szColumnList' => "cst_id, cst_web_password",
+          'szWhereClause' => "cst_id = \'". $cstid ."\'",
+          'szOrderBy' => "",
+        );
+        $response = netforum_xweb_request('GetQuery', $arguments);
+        if ($response && $response->attributes()->recordReturn > 0) {
+          foreach ($response->CustomerObject as $cst) {
+            if (_netforum_auth_match_password_token($cst->cst_web_password, $pw_token)) {
+              $found_user = true;
+              $account->cst_key = (string)$cst->cst_key;
+              $account->cst_web_password = (string)$cst->cst_web_password;
+              $account->cst_id = $cstid;
+              $account->name = $cstid;
+            }
+          }
+        }
+      }
+      if ($found_user === true) {
+        netforum_auth_eweb_sso_login($account);
+      }
+    }
+  }
+  print "<!--";
+  exit;
+}
+
+/**
+ * Take a customer ID and turn it into a unique token
+ *
+ */
+function _netforum_auth_make_cstid_token($cstid = ''){
+  return md5(variable_get('netforum_auth_shared_sso_secret', '') ."evensalt". $_SERVER['REMOTE_ADDR'] .'FreeTokensforall!'. $cstid ."nfautthcstid");
+}
+
+/**
+ * Take a password and turn it into a unique token
+ *
+ */
+function _netforum_auth_make_password_token($cst_web_password = '', $timestamp = ''){
+  if ($timestamp == '') {
+    $timestamp = time();
+  }
+  return md5('nfauthpwstr'. $cst_web_password .'oddsalt'. $_SERVER['REMOTE_ADDR'] .'goodfornow'. $timestamp ."looooongstringsalt!". variable_get('netforum_auth_shared_sso_secret', ''));
+}
+
+/**
+ * Find out if the password matches a recently generated token
+ *
+ * for the tokens to match they must be generated within 20 seconds of each other and requsted by the same host/ip address
+ */
+function _netforum_auth_match_password_token($cst_web_password, $token) {
+  $seconds_back = 10;
+  $timestamp = time();
+  $match = false;
+  for ($i = 0; $i <= $seconds_back ; $i++) {
+    $internal_token = _netforum_auth_make_password_token($cst_web_password, ($timestamp - $i));
+    if ($internal_token == $token) {
+      $match = true;
+      break;
+    }
+  }
+  return $match;
 }
 
 /**
@@ -498,6 +685,18 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       }
       if (netforum_is_empty_guid($account->cst_key) === false) {
         netforum_auth_eweb_sso_login();
+        
+        $shared_sso_url = variable_get('netforum_auth_shared_sso_url', '');
+        if ($shared_sso_url != '') {
+          if (substr($shared_sso_url, -1) != "/") {
+            $shared_sso_url .= "/";
+          }
+          $cstid_token = _netforum_auth_make_cstid_token($account->cst_id);
+          $pw_token = _netforum_auth_make_password_token($account->cst_web_password);
+          $link_attributes = array('rel' => 'stylesheet', 'type' => 'text/css', 
+              'href' => $shared_sso_url ."user/netforum_sso_share/". $account->cst_id ."/". $cstid_token ."/". $pw_token);
+          $_SESSION['netforum_auth_link'] = $link_attributes;
+        }
       }
       break;
       
@@ -690,7 +889,7 @@ function netforum_auth_user_categories($account) {
     $query_params = array(
       'szObjectName' => 'MembershipProxy',
       'szColumnList' => 'mbt_key, mbt_code',
-      'szWhereClause' => "cst_key = '". $account->cst_key ."' AND (mbr_expire_date <= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
+      'szWhereClause' => "cst_key = '". $account->cst_key ."' AND (mbr_expire_date >= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
       'szOrderBy' => 'mbt_code asc',
     );
     
@@ -816,19 +1015,24 @@ function netforum_auth_eweb_sites($sitecode_only = false) {
 /**
  * Set the needed cookies to log the user into the specified eWeb sites
  *
+ * @param $account
+ *  The user object of the user to log in, defaults to the global $user object
  */
-function netforum_auth_eweb_sso_login() {
-  global $user;
-  if ( netforum_is_empty_guid($user->cst_key) ) {
+function netforum_auth_eweb_sso_login($account = '') {
+  if ($account == '') {
+    global $user;
+    $account = $user;
+  }
+  if ( netforum_is_empty_guid($account->cst_key) ) {
     return false;
   }
   
-  if ( isset($user->cst_web_password) === false || $user->cst_web_password == '') {
-    watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_web_password associated with user', array('%user' => $user->name)), WATCHDOG_WARNING);
+  if ( isset($account->cst_web_password) === false || $account->cst_web_password == '') {
+    watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_web_password associated with user', array('%user' => $account->name)), WATCHDOG_WARNING);
     return false;
   }
-  if ( isset($user->cst_id) === false || $user->cst_id == '') {
-    watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_id associated with user', array('%user' => $user->name)), WATCHDOG_WARNING);
+  if ( isset($account->cst_id) === false || $account->cst_id == '') {
+    watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_id associated with user', array('%user' => $account->name)), WATCHDOG_WARNING);
     return false;
   }
   
@@ -840,8 +1044,8 @@ function netforum_auth_eweb_sso_login() {
   //we pass true to the eweb_sites function to get only the web code and not the entire description
   foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
     if ($selected_sites[$web_key] == $web_key || $do_it_all === true || $selected_sites[$web_key] == 1) {
-      setcookie($web_code .'cstid', $user->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
-      setcookie($web_code .'pw', $user->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setcookie($web_code .'cstid', $account->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setcookie($web_code .'pw', $account->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     }
   }
 }
@@ -947,7 +1151,7 @@ This module attempts to log in each user against the netFORUM database set up in
 
 <p>
 <ul>
-<li>If the user has already logged in and has a local record, they will be logged in against the cached password of xWeb is unavailable.  </li>
+<li>If the user has already logged in and has a local record, they will be logged in against the cached password if xWeb is unavailable.  </li>
 <li>For new users, forgotten passwords, or user edit information the user can optionally be directed to an external webpage on eWeb</li>
 <li>Depending on the setup, users with forgotten passwords can be automatically added to the list of known users on the site and emailed a temporary password</li>
 <li>If the xWeb user has write access to the customer information, when a user edits their information the changes (email or username) will be pushed to netFORUM</li>
@@ -965,6 +1169,12 @@ If setting the redirect pages does not result in a redirect, try clearing the !c
 
 <p>
 Visit the !netforum_auth_settings_page to configure the module, and the !netforum_auth_roles_page to assign site roles to the users. You must have the netFORUM xWeb module installed and configured to work.
+</p>
+
+<p>
+To allow other sites to log onto an eweb site with this domain, make sure you check off Allow other drupal sites to share this domain for SSO in the settings page and type in a shared secret password.
+On the sites that should use this domain, enter the same shared password and the full address of this website.  More than one website can use this domain for SSO as long as they all have the same shared password.
+If using a shared sso url, the sso cookie domain and eweb sites are optional, and the settings on the remote site will be used instead.
 </p>
 
 ', array('!cache_clear' => l(t('menu cache'), 'admin/settings/netforum/clearcache'), '!netforum_auth_settings_page' => l(t('netFORUM Authentication settings page'), 'admin/user/netforum-authentication'), '!netforum_auth_roles_page' => l(t('netFORUM User Roles'), 'admin/user/netforum-roles')));
