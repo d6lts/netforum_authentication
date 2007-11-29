@@ -312,7 +312,7 @@ function netforum_auth_admin_settings_validate($form_id, $form_values) {
     $url_okay = true;
   }
   
-  if ( $secret_okay === true && $url_okay === true ) {
+  if ( $secret_okay === true && $url_okay === true && trim($form_values['netforum_auth_shared_sso_url']) != ''  ) {
     if (ini_get('allow_url_fopen')) {
       $check_url = $form_values['netforum_auth_shared_sso_url'];
       if (substr($check_url, -1) != '/') {
