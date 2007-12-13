@@ -1,3 +1,8 @@
+Changes from 5.x-0.8-7
+- Fixed bug when loading user groups
+- Added role IDs of 0 to the list of roles to ignore
+- Changed default netforum_auth_user_categories function to work with default NF configuration
+
 Changes from 5.x-0.8-6
 - Fixed bug in determing default member categories
 - Added support for cross-domain SSO if multiple drupal sites are running the module

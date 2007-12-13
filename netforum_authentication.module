@@ -624,7 +624,13 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             
             //Now we need to look at the current user roles (from the db) and compare them to the combined netforum roles and sticky roles. 
             //if they are different, update the roles and save them to the database.
-            $combined_roles = array_merge($sticky_roles, $netforum_roles); 
+            $combined_roles = array();
+            foreach ($sticky_roles as $k => $v) {
+              $combined_roles[$k] = $v;
+            }
+            foreach ($netforum_roles as $k => $v){
+              $combined_roles[$k] = $v;
+            }
             
             //just to make sure that that the roles we're comparing are the actual values from site, eg if the name of the role was changed, 
             //we use array_walk to replace the values of our combined roles array with the freshest site values based on the id
@@ -888,9 +894,8 @@ function netforum_auth_user_categories($account) {
   if ( count(module_implements('netforum_auth_user_categories')) == 0 ) {
     $query_params = array(
       'szObjectName' => 'MembershipProxy',
-      'szColumnList' => 'mbt_key, mbt_code',
+      'szColumnList' => 'mbr_mbt_key',
       'szWhereClause' => "cst_key = '". $account->cst_key ."' AND (mbr_expire_date >= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
-      'szOrderBy' => 'mbt_code asc',
     );
     
     $response = netforum_xweb_request("GetQuery", $query_params);
@@ -1095,7 +1100,7 @@ function netforum_auth_hash_pw($password = '') {
 function netforum_auth_ignore_roles() {
   //We use this in two places, when setting the roles and when assigning netforum users to roles.  
   //sure, it could be a global but what if there's some criteria we want to impose later?
-  return array(DRUPAL_AUTHENTICATED_RID => '', DRUPAL_ANONYMOUS_RID => '');
+  return array(DRUPAL_AUTHENTICATED_RID => '', DRUPAL_ANONYMOUS_RID => '', 0 => '');
 }
 
 /*
