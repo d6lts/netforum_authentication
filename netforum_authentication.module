@@ -162,14 +162,14 @@ function netforum_auth_user_pass_validate($form_id, $form_values) {
   }
   if (!$account) {
     $query = array('szObjectName' => 'Customer @TOP 1',
-        'szColumnList' => 'cst_type, cst_web_login, cst_eml_address_dn',
-        'szWhereClause' => "cst_web_login is not null AND cst_web_login != '' AND (cst_eml_address_dn  = '$name' OR cst_web_login = '$name')",
+        'szColumnList' => 'cst_type, cst_web_login, eml_address',
+        'szWhereClause' => "(eml_address  = '$name' OR cst_web_login = '$name')",
         'szOrderBy' => '');
     $response = netforum_xweb_request('GetQuery', $query);
     if ($response && $response->attributes()->recordReturn == 1) {
       $cst_obj = $response->CustomerObject;
       $cst_name = (string)$cst_obj->cst_web_login;
-      $cst_mail = (string)$cst_obj->cst_eml_address_dn;
+      $cst_mail = (string)$cst_obj->eml_address;
       $cst_type = (string)$cst_obj->cst_type;
       $cst_key = (string)$cst_obj->cst_key;
       //adapted from user_authenticate in the user module to add a new user
@@ -207,7 +207,7 @@ function netforum_auth_admin_settings() {
     '#required' => TRUE,
     '#default_value' => variable_get('netforum_auth_user_register', '<drupal>'),
   );
-  
+
   $form['settings']['netforum_auth_forgotten_password'] = array(
     '#title' => t('Forgotten Passwords'),
     '#type' => 'textfield',
@@ -216,15 +216,15 @@ function netforum_auth_admin_settings() {
     '#required' => TRUE,
     '#default_value' => variable_get('netforum_auth_forgotten_password', '<drupal>'),
   );
-  
+
   $form['settings']['netforum_auth_forgot_password_add'] = array(
     '#title' => t('Search netFORUM for users with forgotten passwords'),
     '#type' => 'checkbox',
     '#description' => t('If using drupal for forgotten passwords, should Drupal check both local users and netFORUM when looking for usernames?  If this is not checked only users who have already logged in can reset their password with Drupal.'),
     '#size' => 40,
     '#default_value' => variable_get('netforum_auth_forgot_password_add', 0),
-  );
-  
+  );  
+
   $form['settings']['netforum_auth_user_editing'] = array(
     '#title' => t('Edit User info'),
     '#type' => 'textfield',
@@ -246,13 +246,25 @@ function netforum_auth_admin_settings() {
     '#description' => t("Which eWeb sites should a user automatically be logged on to when logged in to drupal?"),
   );
   
-  $form['sso']['netforum_auth_eweb_sso'] = array(
-    '#title' => t('eWeb Sites'),
-    '#type' => 'checkboxes',
-    '#description' => t('Select all to log users onto every eweb site in netFORUM or pick only the sites you want'),
-    '#options' => array_merge(array('ALL' => 'All eweb sites'), netforum_auth_eweb_sites()),
-    '#default_value' => variable_get('netforum_auth_eweb_sso', array()),
-  );
+
+  if (variable_get('netforum_xweb_od', 1) == 0) {    
+    $form['sso']['netforum_auth_eweb_sso'] = array(
+      '#title' => t('eWeb Sites'),
+      '#type' => 'checkboxes',
+      '#description' => t('Select all to log users onto every eweb site in netFORUM or pick only the sites you want'),
+      '#options' => array_merge(array('ALL' => 'All eweb sites'), netforum_auth_eweb_sites()),
+      '#default_value' => variable_get('netforum_auth_eweb_sso', array()),
+    );
+  }
+  else {
+    $form['sso']['netforum_auth_eweb_sso_sitecode'] = array(
+      '#title' => t('eWeb Site Code'),
+      '#type' => 'textfield',
+      '#description' => t('Enter the sitecode for your eWeb site, commonly the acronym after Site= in your eWeb URL.'),
+      '#size' => 10,
+      '#default_value' => variable_get('netforum_auth_eweb_sso_sitecode', ''),
+    );
+  }
   
   $form['sso']['netforum_auth_cookie_domain'] = array(
     '#title' => t('SSO Cookie domain'),
@@ -540,14 +552,18 @@ function netforum_authentication_auth($username, $password, $server) {
     $username .= "@$server";
   }
   
+  //If we are using OD skip the rest of our function and let the OD function handle it.
+  if (variable_get('netforum_xweb_od', 0) == 1) {
+    return _netforum_authentication_auth_od($username, $password);
+  }
+  
   $result = netforum_xweb_request("WebLogin", array("userLoginPlain" => $username,
       "passwordPlain" => $password,
       "keyOverride" => ""));
 		
   if (is_null($result) || isset($result->WebLoginResult) === false ) {
     //try local authentication juuuust in case xWeb is unavailable
-    $result = db_query("SELECT uid FROM {users} WHERE name='%s' AND cst_web_password = '%s'", $username, netforum_auth_hash_pw($password));
-    if (db_num_rows($result) > 0) {
+    if (_netforum_authentication_auth_local($username, $password)) {
       return true;
     }
     else {
@@ -569,6 +585,53 @@ function netforum_authentication_auth($username, $password, $server) {
     return TRUE;
   }
   
+}
+
+/**
+ *  Called from netforum_authentication_auth which is the implementation of hook_auth()
+ *
+ * uses xWeb On Demand to verify a login, returns true a matching username and pw,
+ * false if CheckeWebUser returns no records
+ *
+ */
+function _netforum_authentication_auth_od($username, $password) {
+  $result = netforum_xweb_request("CheckEWebUser", array("szEmail" => $username,
+      "szPassword" => $password));
+		
+  if (is_null($result) || isset($result->Result) === false) {
+    //try local authentication juuuust in case xWeb is unavailable
+    if (_netforum_authentication_auth_local($username, $password)) {
+      return true;
+    }
+    else {
+      drupal_set_message(t('Could not communicate with authentication server, please try again in a few minutes'), 'error');
+      watchdog('netforum', t("Could not authenticate user %username because the xweb query returned a null result - is the server available and responsive?", array('%username' => $username)), WATCHDOG_ERROR);
+      return false;
+    }
+  }
+
+  if ($result->attributes()->recordReturn == 0) {
+    return FALSE;
+  }
+  else {
+    global $_netforum_auth_eweb_od_user;
+    $_netforum_auth_eweb_od_user = $result->Result;
+    return TRUE;
+  }
+}
+
+/**
+ * Authenticate a username using the local DB cache
+ *
+ */
+function _netforum_authentication_auth_local($username, $password) {
+  $result = db_query("SELECT uid FROM {users} WHERE name='%s' AND cst_web_password = '%s'", $username, netforum_auth_hash_pw($password));
+  if (db_num_rows($result) > 0) {
+    return true;
+  }
+  else {
+    return false;
+  }
 }
 
 /**
@@ -646,16 +709,24 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             
           
           $cst_fields = netforum_auth_user_fields();
+          if (in_array('eml_address', $cst_fields) === false) {
+            $cst_fields[] = 'eml_address'; //make sure we grab the email address
+          }
+          if (in_array('cst_web_force_password_change', $cst_fields) === false) {
+            $cst_fields[] = 'cst_web_force_password_change'; //make sure we check to see if they should change their pw
+          }
+          
           //check to see if  any of the customer fields are different from the information in the DB
           $query = Array('szObjectName' => 'Customer',
                 'szColumnList' => implode(", ", $cst_fields),
                 'szWhereClause' => "cst_key = '". $account->cst_key ."'",
                 'szOrderBy' => '');
           $response = netforum_xweb_request('GetQuery', $query, '3 seconds'); //do not look for cached results to this query longer than this request
+          
           if ($response && $response->attributes()->recordReturn == 1) {
             $cst_obj = $response->CustomerObject; 
             
-            $email = (string)$cst_obj->cst_eml_address_dn;
+            $email = (string)$cst_obj->eml_address;
             if ($account->mail != $email ) {
               $new_info['mail'] = $email;
             }
@@ -672,7 +743,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
               }
             }
           }
-        
+          
           if (count($new_info) > 0) {
             user_save($account, $new_info);
           }
@@ -713,8 +784,8 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       break;
       
     case 'insert':
-      global $_netforum_auth_token, $_netforum_auth_cst_key;
-      if (netforum_is_empty_guid($_netforum_auth_token) === false ) {
+      global $_netforum_auth_token, $_netforum_auth_cst_key, $_netforum_auth_eweb_od_user;
+      if (netforum_is_empty_guid($_netforum_auth_token) === false) { //This is only set in the enterprise version
         $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_netforum_auth_token));
         if (is_null($result) || isset($result->WebValidateResult) === false ) {
           drupal_set_message(t('Could not fetch netFORUM information for new user'), 'error');
@@ -724,82 +795,90 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
           $_netforum_auth_cst_key =  (string)$result->WebValidateResult;
           $_netforum_auth_token = null; //unset this so we don't keep calling xweb
         }
-	
-        if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) {
-          $nf_user_data = array();
-          $query = Array('szObjectName' => 'Customer',
-                  'szColumnList' => 'cst_type, cst_eml_address_dn, cst_web_password, cst_id',
-                  'szWhereClause' => "cst_key = '". $_netforum_auth_cst_key ."'",
-                  'szOrderBy' => '');
-          $response = netforum_xweb_request('GetQuery', $query);
-          if (isset($response) && $response->attributes()->recordReturn == 1) {
-            $cst_obj = $response->CustomerObject;
-            $nf_user_data = Array(
-              'cst_key' => $_netforum_auth_cst_key,
-              'mail' => (string)$cst_obj->cst_eml_address_dn,
-              'cst_type' => (string)$cst_obj->cst_type,
-              'cst_id' => (string)$cst_obj->cst_id,
-              'cst_web_password' => (string)$cst_obj->cst_web_password,
-            );
-            $edit['cst_web_password'] = (string)$cst_obj->cst_web_password;
-          }
-          else {
-            $nf_user_data['cst_key'] = $_netforum_auth_cst_key;
-          }
-          
-          user_save($account, $nf_user_data);
+	    }
+	    
+	    //This is set if they are using OD
+	    if (isset($_netforum_auth_eweb_od_user)) {
+	      $_netforum_auth_cst_key = $_netforum_auth_eweb_od_user->cst_key;
+	    }
+	    
+      if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) {
+        $nf_user_data = array();
+        $query = Array('szObjectName' => 'Customer',
+                'szColumnList' => 'cst_type, eml_address, cst_web_password, cst_id',
+                'szWhereClause' => "cst_key = '". $_netforum_auth_cst_key ."'",
+                'szOrderBy' => '');
+        $response = netforum_xweb_request('GetQuery', $query);
+        if (isset($response) && $response->attributes()->recordReturn == 1) {
+          $cst_obj = $response->CustomerObject;
+          $nf_user_data = Array(
+            'cst_key' => $_netforum_auth_cst_key,
+            'mail' => (string)$cst_obj->eml_address,
+            'cst_type' => (string)$cst_obj->cst_type,
+            'cst_id' => (string)$cst_obj->cst_id,
+            'cst_web_password' => (string)$cst_obj->cst_web_password,
+          );
+          $edit['cst_web_password'] = (string)$cst_obj->cst_web_password;
         }
+        else {
+          $nf_user_data['cst_key'] = $_netforum_auth_cst_key;
+        }
+        
+        user_save($account, $nf_user_data);
       }
+      
       break;
       
     case 'update':
       if ( netforum_is_empty_guid($account->cst_key) === false) { 
-        //this array keeps key => value pairs to correspond to the netFORUM information to be updated.
-        $nf_variables = array();
-        if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) == '<drupal>') {
-          if (isset($edit['mail']) && $edit['mail'] != '' && $edit['mail'] != $account->mail) {
-            $nf_variables['eml_address'] = $edit['mail'];
+        if (variable_get('netforum_xweb_od', 1) == 0) { //Only updated if we're hava access to the updates
+          //this array keeps key => value pairs to correspond to the netFORUM information to be updated.
+          $nf_variables = array();
+          if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) == '<drupal>') {
+            if (isset($edit['mail']) && $edit['mail'] != '' && $edit['mail'] != $account->mail) {
+              $nf_variables['eml_address'] = $edit['mail'];
+            }
+            if (isset($edit['pass']) && $edit['pass'] != '') {
+              $nf_variables['cst_web_password'] = $edit['pass'];
+              $nf_variables['cst_web_force_password_change'] = 0;
+              //Save cst_web_password because we use it if the user is logging in and xWeb is not available.  
+              $edit['cst_web_password'] = netforum_auth_hash_pw($edit['pass']);
+            }
+            if (isset($edit['name']) && $edit['name'] != '' && $edit['name'] != $account->name) {
+              $nf_variables['cst_web_login'] = $edit['name'];
+            }
           }
-          if (isset($edit['pass']) && $edit['pass'] != '') {
-            $nf_variables['cst_web_password'] = $edit['pass'];
-            $nf_variables['cst_web_force_password_change'] = 0;
-            //Save cst_web_password because we use it if the user is logging in and xWeb is not available.  
-            $edit['cst_web_password'] = netforum_auth_hash_pw($edit['pass']);
-          }
-          if (isset($edit['name']) && $edit['name'] != '' && $edit['name'] != $account->name) {
-            $nf_variables['cst_web_login'] = $edit['name'];
-          }
-        }
 
-        if (count($nf_variables) > 0) {
-          $success = false; //don't assume it worked by default, this is set on success below
-          if ($account->cst_type == 'Individual') { //this way customers and individuals can log in and edit info.  Beware when setting variables above that they are cst_type agnostic
-            $data_node = netforum_ind_info_parameters($nf_variables);
-            $response = netforum_xweb_request('SetIndividualInformation', array('IndividualKey' => $account->cst_key, 'oUpdateNode' => $data_node));
-            if (isset($response) && $response->attributes()->recordReturn == 1 && $response->IndividualObject->ind_cst_key == $account->cst_key) {
-              $success = true;
+          if (count($nf_variables) > 0) {
+            $success = false; //don't assume it worked by default, this is set on success below
+            if ($account->cst_type == 'Individual') { //this way customers and individuals can log in and edit info.  Beware when setting variables above that they are cst_type agnostic
+              $data_node = netforum_ind_info_parameters($nf_variables);
+              $response = netforum_xweb_request('SetIndividualInformation', array('IndividualKey' => $account->cst_key, 'oUpdateNode' => $data_node));
+              if (isset($response) && $response->attributes()->recordReturn == 1 && $response->IndividualObject->ind_cst_key == $account->cst_key) {
+                $success = true;
+              }
             }
-          }
-          elseif ($account->cst_type == 'Organization') {
-            $data_node = netforum_org_info_parameters($nf_variables);
-            $response = netforum_xweb_request('SetOrganizationInformation', array('OrganizationKey' => $account->cst_key, 'oUpdateNode' => $data_node));
-            if ( isset($response) && $response->attributes()->recordReturn == 1 && $response->OrganizationObject->org_cst_key == $account->cst_key) {
-              $success = true;
+            elseif ($account->cst_type == 'Organization') {
+              $data_node = netforum_org_info_parameters($nf_variables);
+              $response = netforum_xweb_request('SetOrganizationInformation', array('OrganizationKey' => $account->cst_key, 'oUpdateNode' => $data_node));
+              if ( isset($response) && $response->attributes()->recordReturn == 1 && $response->OrganizationObject->org_cst_key == $account->cst_key) {
+                $success = true;
+              }
             }
-          }
 	    
-          if ($success === false) {
-            drupal_set_message(t('Information update failed, please try again in a few minutes.'), 'error');
-            watchdog('netforum', t("Could not update user information in netFORUM for %name", array('%name' => $account->name)), WATCHDOG_ERROR);
-            $path = isset($_GET['q']) ? $_GET['q'] : '';
-            $query = drupal_query_string_encode($_GET, array('q'));
-            if ($query != '') {
-              $path .= '?'. $query;
-            } 
-            drupal_goto($path);
-          }
-          else {
-            $_SESSION['netforum_auth_skip_info_sync'] = true;
+            if ($success === false) {
+              drupal_set_message(t('Information update failed, please try again in a few minutes.'), 'error');
+              watchdog('netforum', t("Could not update user information in netFORUM for %name", array('%name' => $account->name)), WATCHDOG_ERROR);
+              $path = isset($_GET['q']) ? $_GET['q'] : '';
+              $query = drupal_query_string_encode($_GET, array('q'));
+              if ($query != '') {
+                $path .= '?'. $query;
+              } 
+              drupal_goto($path);
+            }
+            else {
+              $_SESSION['netforum_auth_skip_info_sync'] = true;
+            }
           }
         }
 
@@ -846,19 +925,27 @@ function netforum_auth_categories() {
   $categories = array();
   // If no modules implement the netforum_auth_categories hook, set it to be based on membership
   if ( count(module_implements('netforum_auth_categories')) == 0 ) {
-	  $query_params = array(
-	    'szObjectName' => 'mb_member_type',
-	    'szColumnList' => 'mbt_key, mbt_code',
-	    'szWhereClause' => 'mbt_delete_flag = 0',
-	    'szOrderBy' => 'mbt_code asc',
-	  );
+    if (variable_get('netforum_xweb_od', 1) == 0){ //in enterprise this works
+	    $query_params = array(
+  	    'szObjectName' => 'mb_member_type',
+  	    'szColumnList' => 'mbt_key, mbt_code',
+  	    'szWhereClause' => 'mbt_delete_flag = 0',
+  	    'szOrderBy' => 'mbt_code asc',
+  	  );
 	    
-	  $response = netforum_xweb_request("GetQuery", $query_params);
-	  
-	  if (isset($response->attributes()->recordReturn) AND $response->attributes()->recordReturn > 0 ) {
-	    foreach ($response->mb_member_typeObject as $mbt) {
-	      $categories[(string)$mbt->mbt_key] = $mbt->mbt_code;
-	    }
+  	  $response = netforum_xweb_request("GetQuery", $query_params);  
+  	  if (isset($response->attributes()->recordReturn) AND $response->attributes()->recordReturn > 0 ) {
+  	    foreach ($response->mb_member_typeObject as $mbt) {
+  	      $categories[(string)$mbt->mbt_key] = $mbt->mbt_code;
+  	    }
+  	  }
+	  }
+	  else{
+	    //if using on demand implement a fixed list of groups
+	    $categories['cst_member_flag'] = t('Member Flag Set');
+	    $categories['cst_life_member_flag'] = t('Life Member Flag Set');
+	    $categories['cst_receives_benefits_flag'] = t('Receives Benefits Flag Set');
+	    $categories['cst_donot_receive_benefits_flag'] = t('Do Not Receive Benefits Flag Set');
 	  }
   }
   else {
@@ -892,20 +979,36 @@ function netforum_auth_user_categories($account) {
   
   // If no modules implement the hook, set it to be based on membership
   if ( count(module_implements('netforum_auth_user_categories')) == 0 ) {
-    $query_params = array(
-      'szObjectName' => 'MembershipProxy',
-      'szColumnList' => 'mbr_mbt_key',
-      'szWhereClause' => "cst_key = '". $account->cst_key ."' AND (mbr_expire_date >= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
-    );
+    if (variable_get('netforum_xweb_od', 1) == 0){ //in enterprise this works
+      $query_params = array(
+        'szObjectName' => 'MembershipProxy',
+        'szColumnList' => 'mbr_mbt_key',
+        'szWhereClause' => "cst_key = '". $account->cst_key ."' AND (mbr_expire_date >= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
+      );
     
-    $response = netforum_xweb_request("GetQuery", $query_params);
+      $response = netforum_xweb_request("GetQuery", $query_params);
     
-    if (isset($response) AND $response->attributes()->recordReturn > 0 ) {
-      netforum_auth_fresh_user_categories(true);
-      foreach ($response->MembershipProxyObject as $mpr) {
-        $user_categories[] = (string)$mpr->mbt_key;
+      if (isset($response) AND $response->attributes()->recordReturn > 0 ) {
+        netforum_auth_fresh_user_categories(true); //Important step!  Note that we have valid categories
+        foreach ($response->MembershipProxyObject as $mpr) {
+          $user_categories[] = (string)$mpr->mbt_key;
+        }
       }
     }
+    else {
+      //When using NF OD use a fixed list of groups
+      netforum_auth_fresh_user_categories(true); //Important step!  Note that we have valid categories
+      $categories = array('cst_member_flag',
+            'cst_life_member_flag',
+            'cst_receives_benefits_flag',
+            'cst_donot_receive_benefits_flag',);
+      foreach ($categories as $c){
+        if (isset($account->$c) && $account->$c == 1) {
+          $user_categories[] = $c;
+        }
+      }
+    }
+    
   }
   else {
     // call the hook_netforum_auth_user_categories function in any modules that implement it. 
@@ -1040,18 +1143,29 @@ function netforum_auth_eweb_sso_login($account = '') {
     watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_id associated with user', array('%user' => $account->name)), WATCHDOG_WARNING);
     return false;
   }
-  
-  $selected_sites = variable_get('netforum_auth_eweb_sso', array());
-  $do_it_all = false;
-  if ( isset($selected_sites['ALL']) && ($selected_sites['ALL'] == 'ALL' || $selected_sites['ALL'] == 1)) {
-    $do_it_all = true;
-  }
-  //we pass true to the eweb_sites function to get only the web code and not the entire description
-  foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
-    if ($selected_sites[$web_key] == $web_key || $do_it_all === true || $selected_sites[$web_key] == 1) {
-      setcookie($web_code .'cstid', $account->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
-      setcookie($web_code .'pw', $account->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+
+  $login_web_codes = array();
+  if (variable_get('netforum_xweb_od', 1) == 0) {
+    $selected_sites = variable_get('netforum_auth_eweb_sso', array());
+    $do_it_all = false;
+    if ( isset($selected_sites['ALL']) && ($selected_sites['ALL'] == 'ALL' || $selected_sites['ALL'] == 1)) {
+      $do_it_all = true;
     }
+    //we pass true to the eweb_sites function to get only the web code and not the entire description
+    foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
+      if ($selected_sites[$web_key] == $web_key || $do_it_all === true || $selected_sites[$web_key] == 1) {
+        $login_web_codes[] = $web_code;
+      }
+    }
+  }
+  else { //We're OD, so only one site code to login to
+    $web_code = variable_get('netforum_auth_eweb_sso_sitecode','');
+    $login_web_codes[] = $web_code;
+  }
+
+  foreach ($login_web_codes as $web_code) {
+    setcookie($web_code .'cstid', $account->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    setcookie($web_code .'pw', $account->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
   }
 }
 
@@ -1082,8 +1196,8 @@ function netforum_auth_eweb_sso_logout() {
 function netforum_auth_hash_pw($password = '') {
   $password = md5($password);
   $nfhash = "";
-  for ($i=0; $i<strlen($nfhash); $i++) {
-    $c = substr($nfhash, $i, 1);
+  for ($i=0; $i<strlen($password); $i++) {
+    $c = substr($password, $i, 1);
     if ($c != "0" || ($i % 2) != 0) {
       $nfhash .= $c;
     }
@@ -1121,6 +1235,15 @@ function netforum_auth_user_fields() {
   $field_names = array_unique(module_invoke_all('netforum_auth_user_fields'));
   
   $object_fields = netforum_object_fields('Customer');
+  
+  if (variable_get('netforum_xweb_od', 0) == 1) { 
+    //Store these if we're using OD since we'll be using them for the groups
+    $field_names[] = 'cst_member_flag';
+    $field_names[] = 'cst_life_member_flag';
+    $field_names[] = 'cst_receives_benefits_flag';
+    $field_names[] = 'cst_donot_receive_benefits_flag';
+  }
+  
   // Only return the fields that available to the Customer object
   $field_names = array_intersect($field_names, array_keys($object_fields));
   
@@ -1139,7 +1262,7 @@ function netforum_auth_user_fields() {
  *    An array of field names
  */
 function netforum_authentication_netforum_auth_user_fields() {
-  return array('cst_eml_address_dn', 'cst_web_force_password_change', 'cst_web_password', 'cst_id');
+  return array('eml_address', 'cst_web_force_password_change', 'cst_web_password', 'cst_id');
 }
 
 /**
