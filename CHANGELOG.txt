@@ -1,4 +1,4 @@
-Changes from 5.x-
+Changes from 5.x-0.8-8
 - Fixed bug w/ local password hashing
 - Now plays nicely with systems that have login by email set
 - Now plays nicely with netFORUM Team and Pro
