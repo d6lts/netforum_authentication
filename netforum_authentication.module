@@ -58,6 +58,13 @@ function netforum_authentication_menu($may_cache) {
       'type' => MENU_CALLBACK,
     );
     
+    $items[] = array('path' => 'nf_od_sso_transfer',
+      'title' => t('Transfer to netFORUM OD w/ SSO'),
+      'callback' => 'netforum_auth_od_sso_transfer',
+      'access' => true,
+      'type' => MENU_CALLBACK,
+    );
+    
     
     //here we will overwrite some special user URLs if we want to alter the behavior, if this isn't working check the load
     // order of the modules to make sure netFORUM loads AFTER the user module.  Load order is determined by weight in the 
@@ -161,17 +168,22 @@ function netforum_auth_user_pass_validate($form_id, $form_values) {
     $account = user_load(array('name' => $name, 'status' => 1));
   }
   if (!$account) {
+    $eml_field = _netforum_auth_get_email_field('Customer');
     $query = array('szObjectName' => 'Customer @TOP 1',
-        'szColumnList' => 'cst_type, cst_web_login, eml_address',
-        'szWhereClause' => "(eml_address  = '$name' OR cst_web_login = '$name')",
+        'szColumnList' => 'cst_type, cst_web_login, '. $eml_field,
+        'szWhereClause' => "(". $eml_field ."  = '$name' OR cst_web_login = '$name')",
         'szOrderBy' => '');
     $response = netforum_xweb_request('GetQuery', $query);
     if ($response && $response->attributes()->recordReturn == 1) {
       $cst_obj = $response->CustomerObject;
       $cst_name = (string)$cst_obj->cst_web_login;
-      $cst_mail = (string)$cst_obj->eml_address;
+      $cst_mail = (string)$cst_obj->{$eml_field};
       $cst_type = (string)$cst_obj->cst_type;
       $cst_key = (string)$cst_obj->cst_key;
+      
+      if (empty($cst_name)) {
+        $cst_name = $cst_mail;
+      }
       //adapted from user_authenticate in the user module to add a new user
       $userinfo = array('name' => $cst_name, 'mail' => $cst_mail, 'pass' => user_password(), 'cst_key' => $cst_key, 'cst_type' => $cst_type, 'init' => $name, 'status' => 1 );
       $userinfo["authname_netforum_authentication"] = $name;
@@ -220,7 +232,7 @@ function netforum_auth_admin_settings() {
   $form['settings']['netforum_auth_forgot_password_add'] = array(
     '#title' => t('Search netFORUM for users with forgotten passwords'),
     '#type' => 'checkbox',
-    '#description' => t('If using drupal for forgotten passwords, should Drupal check both local users and netFORUM when looking for usernames?  If this is not checked only users who have already logged in can reset their password with Drupal.'),
+    '#description' => t('If using drupal for forgotten passwords, should Drupal check both local users and netFORUM when looking for usernames?  If this is not checked only users who have already logged in can reset their password with Drupal.  '),
     '#size' => 40,
     '#default_value' => variable_get('netforum_auth_forgot_password_add', 0),
   );  
@@ -228,11 +240,23 @@ function netforum_auth_admin_settings() {
   $form['settings']['netforum_auth_user_editing'] = array(
     '#title' => t('Edit User info'),
     '#type' => 'textfield',
-    '#description' => t('Enter the URL users should be redirected to to edit their information, or &lt;drupal&gt; to use built in functionality.  Note that this includes setting passwords and email addresses by default'),
+    '#description' => t('Enter the URL users should be redirected to to edit their information, or &lt;drupal&gt; to use built in functionality.  Note that this includes setting passwords and email addresses by default.  '),
     '#size' => 40,
     '#required' => TRUE,
     '#default_value' => variable_get('netforum_auth_user_editing', '<drupal>'),
   );
+  
+  if (variable_get('netforum_xweb_od',0) == 1) {
+    $form['settings']['netforum_auth_user_text'] = array(
+      '#title' => t('Edit User notes'),
+      '#type' => 'textarea',
+      '#description' => t('If the edit user info URL above is set to <drupal>, this block of text will appear at the top of the user edit info form instead of the username and password.  Use this space to provide notes and links to locations where users should edit their username and password if desired.'),
+      '#default_value' => variable_get('netforum_auth_user_text',''),
+    );
+    
+    $form['settings']['netforum_auth_user_editing']['#description'] .= t('<b>Note:</b>  netFORUM On Demand cannot update user information, no changes to user name or password will be allowed on the drupal form.');
+    $form['settings']['netforum_auth_forgot_password_add']['#description'] .= t('<b>Note:</b>  netFORUM On Demand cannot update user information, no changes to user name or password will be allowed on the drupal form.');
+  }
   
   $form['settings']['cache_clear'] = array(
     '#title' => 'Menu troubleshooting',
@@ -598,7 +622,7 @@ function _netforum_authentication_auth_od($username, $password) {
   $result = netforum_xweb_request("CheckEWebUser", array("szEmail" => $username,
       "szPassword" => $password));
 		
-  if (is_null($result) || isset($result->Result) === false) {
+  if (is_null($result) ) {
     //try local authentication juuuust in case xWeb is unavailable
     if (_netforum_authentication_auth_local($username, $password)) {
       return true;
@@ -709,8 +733,9 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             
           
           $cst_fields = netforum_auth_user_fields();
-          if (in_array('eml_address', $cst_fields) === false) {
-            $cst_fields[] = 'eml_address'; //make sure we grab the email address
+          $eml_field = _netforum_auth_get_email_field('Customer');
+          if (in_array($eml_field, $cst_fields) === false) {
+            $cst_fields[] = $eml_field; //make sure we grab the email address
           }
           if (in_array('cst_web_force_password_change', $cst_fields) === false) {
             $cst_fields[] = 'cst_web_force_password_change'; //make sure we check to see if they should change their pw
@@ -722,11 +747,11 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
                 'szWhereClause' => "cst_key = '". $account->cst_key ."'",
                 'szOrderBy' => '');
           $response = netforum_xweb_request('GetQuery', $query, '3 seconds'); //do not look for cached results to this query longer than this request
-          
+
           if ($response && $response->attributes()->recordReturn == 1) {
             $cst_obj = $response->CustomerObject; 
             
-            $email = (string)$cst_obj->eml_address;
+            $email = (string)$cst_obj->{$eml_field};
             if ($account->mail != $email ) {
               $new_info['mail'] = $email;
             }
@@ -738,7 +763,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             
             foreach ($cst_fields as $field) {
               $field_value = (string)$cst_obj->{$field};
-              if ($account->{$field} != $field_value) {
+              if (empty($field) === false && $account->{$field} != $field_value) {
                 $new_info[$field] = $field_value;
               }
             }
@@ -804,8 +829,11 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
 	    
       if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) {
         $nf_user_data = array();
+        
+        $eml_field = _netforum_auth_get_email_field('Customer');
+
         $query = Array('szObjectName' => 'Customer',
-                'szColumnList' => 'cst_type, eml_address, cst_web_password, cst_id',
+                'szColumnList' => 'cst_type, '. $eml_field .', cst_web_password, cst_id',
                 'szWhereClause' => "cst_key = '". $_netforum_auth_cst_key ."'",
                 'szOrderBy' => '');
         $response = netforum_xweb_request('GetQuery', $query);
@@ -813,7 +841,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
           $cst_obj = $response->CustomerObject;
           $nf_user_data = Array(
             'cst_key' => $_netforum_auth_cst_key,
-            'mail' => (string)$cst_obj->eml_address,
+            'mail' => (string)$cst_obj->{$eml_field},
             'cst_type' => (string)$cst_obj->cst_type,
             'cst_id' => (string)$cst_obj->cst_id,
             'cst_web_password' => (string)$cst_obj->cst_web_password,
@@ -1184,6 +1212,14 @@ function netforum_auth_eweb_sso_logout() {
 }
 
 /**
+ * Fetch an authentication token if needed and transfer the user to the netFORUM on Demand page
+ */
+function netforum_auth_od_sso_transfer() {
+  print_r($_GET['loc']);
+  print "You made it!!!!";
+}
+
+/**
  * Returns the modified md5 hash that will match the cst_web_password field from netFORUM
  *
  * Thanks to Ford Parsons by way of Darryl Hopkins for the function
@@ -1252,7 +1288,7 @@ function netforum_auth_user_fields() {
   return $field_names;
 }
 
-/*
+/**
  * Implementation of hook_netforum_auth_user_fields
  *
  * Any fields specified here must exist in the Customer object and will be loaded and
@@ -1262,7 +1298,121 @@ function netforum_auth_user_fields() {
  *    An array of field names
  */
 function netforum_authentication_netforum_auth_user_fields() {
-  return array('eml_address', 'cst_web_force_password_change', 'cst_web_password', 'cst_id');
+  $eml_field = _netforum_auth_get_email_field('Customer');
+  return array($eml_field, 'cst_web_force_password_change', 'cst_web_password', 'cst_id');
+}
+
+/**
+ * Find or guess a valid email field for an object
+ *
+ * Most useful when switching between different systems that may have
+ * their data objects or list tables configured differently, such as OD v Enterprise
+ *
+ * @param
+ *    A string with the name or key of the object
+ *
+ * @return
+ *    A string with the name of the email address column
+ */
+function _netforum_auth_get_email_field($obj_name) {
+  static $seen_objects = array();
+  
+  if (netforum_is_valid_guid($obj_name)){
+    $obj_name = netforum_object_name($obj_name);
+  }
+  
+  if (array_key_exists($obj_name, $seen_objects)) {
+    return $seen_objects[$obj_name];
+  }
+  
+  $object_fields = array_keys(netforum_object_fields($obj_name));
+  
+  $options = array('eml_address', 'cst_eml_address_dn' );
+  
+  foreach ($options as $field) {
+    if (in_array($field, $object_fields)) {
+      $seen_objects[$obj_name] = $field;
+      return $field;
+    }
+  }
+  return 'eml_address';
+}
+
+/**
+ * Implementation of hook_form_alter()
+ *
+ * Used to prevent uneditable fields from showing for users created
+ * through netFORUM On Demand authentication
+ */
+function netforum_authentication_form_alter($form_id, &$form) {
+  global $user;
+  if ($form_id == 'user_edit' 
+      && variable_get('netforum_xweb_od', 0) == 1 
+      && netforum_is_valid_guid($user->cst_key)) { 
+    
+    //Remove the name, email, and password fields    
+    unset($form['account']['name']);
+    unset($form['account']['mail']);
+    unset($form['account']['pass']);
+    
+    $auth_user_text = variable_get('netforum_auth_user_text', '');
+    if ($auth_user_text != '' ) {
+      $auth_user_text = check_markup($auth_user_text, FILTER_FORMAT_DEFAULT, false);
+      $form['account']['netforum_auth_user_text'] = array(
+        '#value' => "<div>". $auth_user_text ."</div>",
+      );
+    }
+    
+    //If there are no other account details, remove the account fieldset
+    $addl_fields = false;
+    foreach($form['account'] as $k => $v ) {
+      if (is_array($v)) { 
+        $addl_fields = true;
+      }
+    }
+    if ($addl_fields === false) {
+      unset($form['account']);
+    }
+  }
+}
+
+/**
+ * Implementation of hook_filter()
+ *
+ * used for netforum OD to rewrite links to the OD eWeb page for SSO
+ */
+function netforum_authentication_filter($op, $delta = 0, $format = -1, $text = '') {
+  
+  $od_domain = "netforumondemand.com";
+  
+  switch ($op) {
+    case 'list':
+      return array(0 => t('netFORUM OnDemand SSO Filter'));
+
+    case 'description':
+      return t('Intercept links to the netFORUM OnDemand eWeb pages to ensure that a user is logged in first, in effect creating SSO.  Any link to !od_domain will be rewritten.', array('!od_domain' => $od_domain));
+
+    case 'prepare':
+      return $text;
+
+    case "process":
+      $searches = array();
+      $replacements = array();
+      $regexp = "/<a\s[^>]*href=([\"\']??)([^\" >]*?)\\1[^>]*>(.*)<\/a>/siU"; 
+      if(preg_match_all($regexp, $text, $matches, PREG_SET_ORDER)) { 
+        foreach ($matches as $match) {
+          if (stristr($match[2], $od_domain)) {
+            $searches[] = $match[2];
+            $replacements[] = url('nf_od_sso_transfer/', "loc=" . urlencode($match[2]));
+          }
+        }
+        $text = str_replace($searches, $replacements, $text);
+      }
+      return $text;
+
+    default:
+      return $text;
+  }
 }
 
 /**
