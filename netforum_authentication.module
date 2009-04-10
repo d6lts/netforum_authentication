@@ -1,7 +1,9 @@
 <?php
 // $Id$
 
-
+//TODO:  There are two places still calling GetQuery w/o regard to OD or Enterprise.  One for the forgot password section,
+// and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
+// to use a separate function to get user data.  Maybe not load data on login?
 
 // This is used for the shared SSO, since the user redirects after login we have to pause a beat before
 // including the magic link in the page
@@ -250,7 +252,7 @@ function netforum_auth_admin_settings() {
     $form['settings']['netforum_auth_user_text'] = array(
       '#title' => t('Edit User notes'),
       '#type' => 'textarea',
-      '#description' => t('If the edit user info URL above is set to <drupal>, this block of text will appear at the top of the user edit info form instead of the username and password.  Use this space to provide notes and links to locations where users should edit their username and password if desired.'),
+      '#description' => t('If the edit user info URL above is set to &lt;drupal&gt;, this block of text will appear at the top of the user edit info form instead of the username and password.  Use this space to provide notes and links to locations where users should edit their username and password if desired.'),
       '#default_value' => variable_get('netforum_auth_user_text',''),
     );
     
@@ -262,16 +264,16 @@ function netforum_auth_admin_settings() {
     '#title' => 'Menu troubleshooting',
     '#type' => 'item',
     '#description' => t('If the settings above are not working properly try '. l(t('clearing the menu cache'), 'admin/settings/netforum/clearcache')),
-  );
-  
-  $form['sso'] = array(
-    '#title' => "Single Sign On settings",
-    '#type' => 'fieldset',
-    '#description' => t("Which eWeb sites should a user automatically be logged on to when logged in to drupal?"),
-  );
-  
+  );  
 
+  //Enterprise only
   if (variable_get('netforum_xweb_od', 1) == 0) {    
+    $form['sso'] = array(
+      '#title' => "Single Sign On settings",
+      '#type' => 'fieldset',
+      '#description' => t("Which eWeb sites should a user automatically be logged on to when logged in to drupal?"),
+    );
+    
     $form['sso']['netforum_auth_eweb_sso'] = array(
       '#title' => t('eWeb Sites'),
       '#type' => 'checkboxes',
@@ -279,56 +281,47 @@ function netforum_auth_admin_settings() {
       '#options' => array_merge(array('ALL' => 'All eweb sites'), netforum_auth_eweb_sites()),
       '#default_value' => variable_get('netforum_auth_eweb_sso', array()),
     );
-  }
-  else {
-    $form['sso']['netforum_auth_eweb_sso_sitecode'] = array(
-      '#title' => t('eWeb Site Code'),
+  
+    $form['sso']['netforum_auth_cookie_domain'] = array(
+      '#title' => t('SSO Cookie domain'),
       '#type' => 'textfield',
-      '#description' => t('Enter the sitecode for your eWeb site, commonly the acronym after Site= in your eWeb URL.'),
-      '#size' => 10,
-      '#default_value' => variable_get('netforum_auth_eweb_sso_sitecode', ''),
+      '#description' => t('To use SSO both eWeb and your drupal installation must share the same top level domain (tld).  For example, if you have drupal running www.example.com then the address for eWeb needs to be something that ends in example.com like store.example.com and this field should be set to .example.com'),
+      '#size' => 40,
+      '#default_value' => variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']),
+    );
+  
+    $form['sso']['netforum_auth_sso_logout_url'] = array(
+      '#title' => t('SSO logout URL'),
+      '#type' => 'textfield',
+      '#description' => t('When a user logs out of drupal any netFORUM cookies set for the domain above will be deleted, but the user can also be directed to a url that will log them out of eWeb such as http://eweb.example.com/eWeb/Logout.aspx .  If this is set to &lt;drupal&gt; then only the cookies will be removed, and the user will be logged out of eWeb when they close the browser.'),
+      '#validate' => array('netforum_valid_sso_logout' => array()),
+      '#size' => 40,
+      '#default_value' => variable_get('netforum_auth_sso_logout_url', '<drupal>'),
+    );
+  
+    $form['sso']['netforum_auth_shared_sso'] = array(
+      '#title' => t('Allow other drupal sites to share this domain for SSO'),
+      '#type' => 'checkbox',
+      '#description' => t("Sometimes users might log into another website running Drupal with a different domain than eWeb, in that case SSO won't work.  Checking this will allow other websites to use this site and domain for logging in to eWeb."),
+      '#default_value' => variable_get('netforum_auth_shared_sso', 0),
+    );
+  
+    $form['sso']['netforum_auth_shared_sso_secret'] = array(
+      '#title' => t('Shared secret password'),
+      '#type' => 'textfield',
+      '#description' => t('Both sites sharing a domain for SSO must have the same shared secret password.  This is used to help ensure that only authorized sites can log users on.'),
+      '#default_value' => variable_get('netforum_auth_shared_sso_secret', ''),
+      '#size' => 40,
+    );
+  
+    $form['sso']['netforum_auth_shared_sso_url'] = array(
+      '#title' => t('Shared SSO url'),
+      '#type' => 'textfield',
+      '#description' => t('To use another website for eWeb SSO, enter the URL of the site here.  The website must also have netFORUM Authentication enabled, a shared key, and allowing other sites must be checked.  The cookie domain and eweb site settings listed above will be ignored, and the settings on the remote site will be used instead.'),
+      '#default_value' => variable_get('netforum_auth_shared_sso_url', ''),
+      '#size' => 40,
     );
   }
-  
-  $form['sso']['netforum_auth_cookie_domain'] = array(
-    '#title' => t('SSO Cookie domain'),
-    '#type' => 'textfield',
-    '#description' => t('To use SSO both eWeb and your drupal installation must share the same top level domain (tld).  For example, if you have drupal running www.example.com then the address for eWeb needs to be something that ends in example.com like store.example.com and this field should be set to .example.com'),
-    '#size' => 40,
-    '#default_value' => variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']),
-  );
-  
-  $form['sso']['netforum_auth_sso_logout_url'] = array(
-    '#title' => t('SSO logout URL'),
-    '#type' => 'textfield',
-    '#description' => t('When a user logs out of drupal any netFORUM cookies set for the domain above will be deleted, but the user can also be directed to a url that will log them out of eWeb such as http://eweb.example.com/eWeb/Logout.aspx .  If this is set to &lt;drupal&gt; then only the cookies will be removed, and the user will be logged out of eWeb when they close the browser.'),
-    '#validate' => array('netforum_valid_sso_logout' => array()),
-    '#size' => 40,
-    '#default_value' => variable_get('netforum_auth_sso_logout_url', '<drupal>'),
-  );
-  
-  $form['sso']['netforum_auth_shared_sso'] = array(
-    '#title' => t('Allow other drupal sites to share this domain for SSO'),
-    '#type' => 'checkbox',
-    '#description' => t("Sometimes users might log into another website running Drupal with a different domain than eWeb, in that case SSO won't work.  Checking this will allow other websites to use this site and domain for logging in to eWeb."),
-    '#default_value' => variable_get('netforum_auth_shared_sso', 0),
-  );
-  
-  $form['sso']['netforum_auth_shared_sso_secret'] = array(
-    '#title' => t('Shared secret password'),
-    '#type' => 'textfield',
-    '#description' => t('Both sites sharing a domain for SSO must have the same shared secret password.  This is used to help ensure that only authorized sites can log users on.'),
-    '#default_value' => variable_get('netforum_auth_shared_sso_secret', ''),
-    '#size' => 40,
-  );
-  
-  $form['sso']['netforum_auth_shared_sso_url'] = array(
-    '#title' => t('Shared SSO url'),
-    '#type' => 'textfield',
-    '#description' => t('To use another website for eWeb SSO, enter the URL of the site here.  The website must also have netFORUM Authentication enabled, a shared key, and allowing other sites must be checked.  The cookie domain and eweb site settings listed above will be ignored, and the settings on the remote site will be used instead.'),
-    '#default_value' => variable_get('netforum_auth_shared_sso_url', ''),
-    '#size' => 40,
-  );
 
   return system_settings_form($form);
 }
@@ -475,6 +468,8 @@ function netforum_auth_shared_sso_check($token = '') {
  * Find the username and password for the individual and log them into eweb
  *
  * We use two tokens to save a DB/xweb hit where not necessary, one for the password one for the cst_id
+ * 
+ * Enterprise only.
  */
 function netforum_auth_shared_sso_login($cstid = '', $cstid_token = '', $pw_token = '') {
   $allow_logins = variable_get('netforum_auth_shared_sso', 0);
@@ -625,6 +620,7 @@ function _netforum_authentication_auth_od($username, $password) {
   if (is_null($result) ) {
     //try local authentication juuuust in case xWeb is unavailable
     if (_netforum_authentication_auth_local($username, $password)) {
+      $_SESSION['_netforum_auth_eweb_pw'] = $password;
       return true;
     }
     else {
@@ -640,6 +636,7 @@ function _netforum_authentication_auth_od($username, $password) {
   else {
     global $_netforum_auth_eweb_od_user;
     $_netforum_auth_eweb_od_user = $result->Result;
+    $_SESSION['_netforum_auth_eweb_pw'] = $password; //We'll need this if they hit a link going to the netforum site
     return TRUE;
   }
 }
@@ -691,46 +688,47 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
           $new_info = array();
           
           
-          $netforum_roles = netforum_auth_map_user_roles($account);
-          //If there is no response from xweb we get an empty array, this is to prevent us from mistaing no response for no roles or entering an infinite update loop
-          if (netforum_auth_fresh_user_categories() === true && $_netforum_auth_already_checked_roles !== true) { 
-            //these are the roles that are checked off on the site's user edit page, not set via netForum.
-            $sticky_roles = array();
-            //no, not the delicious kind of sticky roles.
+          if ($_netforum_auth_already_checked_roles !== true) {
+            $netforum_roles = netforum_auth_map_user_roles($account);
+            //If there is no response from xweb we get an empty array, this is to prevent us from mistaing no response for no roles or entering an infinite update loop
+            if (netforum_auth_fresh_user_categories() === true) { 
+              //these are the roles that are checked off on the site's user edit page, not set via netForum.
+              $sticky_roles = array();
+              //no, not the delicious kind of sticky roles.
             
-            if (is_array($account->netforum_auth_admin_set_roles)) {
-              $sticky_roles = array_diff_key($account->netforum_auth_admin_set_roles, $netforum_roles);  //take out the roles that are being set by netforum
-              $sticky_roles = array_diff_key($sticky_roles, $ignore_roles); //take out the roles like authenticated user
+              if (is_array($account->netforum_auth_admin_set_roles)) {
+                $sticky_roles = array_diff_key($account->netforum_auth_admin_set_roles, $netforum_roles);  //take out the roles that are being set by netforum
+                $sticky_roles = array_diff_key($sticky_roles, $ignore_roles); //take out the roles like authenticated user
               
-              if ($sticky_roles != $account->netforum_auth_admin_set_roles) {
-                //if the netforum roles now include a role that was sticky it's removed from the sticky roles and is no longer given to the user by the sticky roles.
-                //That way, when netforum stops returning that role, then it will also dissapear from their account.
-                $new_info['netforum_auth_admin_set_roles'] = $sticky_roles;
+                if ($sticky_roles != $account->netforum_auth_admin_set_roles) {
+                  //if the netforum roles now include a role that was sticky it's removed from the sticky roles and is no longer given to the user by the sticky roles.
+                  //That way, when netforum stops returning that role, then it will also dissapear from their account.
+                  $new_info['netforum_auth_admin_set_roles'] = $sticky_roles;
+                }
               }
-            }
             
-            //Now we need to look at the current user roles (from the db) and compare them to the combined netforum roles and sticky roles. 
-            //if they are different, update the roles and save them to the database.
-            $combined_roles = array();
-            foreach ($sticky_roles as $k => $v) {
-              $combined_roles[$k] = $v;
-            }
-            foreach ($netforum_roles as $k => $v){
-              $combined_roles[$k] = $v;
-            }
+              //Now we need to look at the current user roles (from the db) and compare them to the combined netforum roles and sticky roles. 
+              //if they are different, update the roles and save them to the database.
+              $combined_roles = array();
+              foreach ($sticky_roles as $k => $v) {
+                $combined_roles[$k] = $v;
+              }
+              foreach ($netforum_roles as $k => $v){
+                $combined_roles[$k] = $v;
+              }
             
-            //just to make sure that that the roles we're comparing are the actual values from site, eg if the name of the role was changed, 
-            //we use array_walk to replace the values of our combined roles array with the freshest site values based on the id
-            $site_roles = user_roles(true);
-            array_walk($combined_roles, create_function('&$v, $k, &$roles', '$v = $roles[$k];'), $site_roles); 
+              //just to make sure that that the roles we're comparing are the actual values from site, eg if the name of the role was changed, 
+              //we use array_walk to replace the values of our combined roles array with the freshest site values based on the id
+              $site_roles = user_roles(true);
+              array_walk($combined_roles, create_function('&$v, $k, &$roles', '$v = $roles[$k];'), $site_roles); 
             
-            //If there is some change, store them in the database.  This way, if xWeb is unavailable we can still give the user appropriate permissions
-            if ($combined_roles != array_diff_key($account->roles, $ignore_roles)) {
-              $new_info['roles'] = $combined_roles;
-            }
-            $_netforum_auth_already_checked_roles = true;
-          } //end ofthe roles checking and assigning
-            
+              //If there is some change, store them in the database.  This way, if xWeb is unavailable we can still give the user appropriate permissions
+              if ($combined_roles != array_diff_key($account->roles, $ignore_roles)) {
+                $new_info['roles'] = $combined_roles;
+              }
+              $_netforum_auth_already_checked_roles = true;
+            } //end ofthe roles checking and assigning
+          }
           
           $cst_fields = netforum_auth_user_fields();
           $eml_field = _netforum_auth_get_email_field('Customer');
@@ -741,16 +739,46 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             $cst_fields[] = 'cst_web_force_password_change'; //make sure we check to see if they should change their pw
           }
           
-          //check to see if  any of the customer fields are different from the information in the DB
-          $query = Array('szObjectName' => 'Customer',
-                'szColumnList' => implode(", ", $cst_fields),
-                'szWhereClause' => "cst_key = '". $account->cst_key ."'",
-                'szOrderBy' => '');
-          $response = netforum_xweb_request('GetQuery', $query, '3 seconds'); //do not look for cached results to this query longer than this request
+          //Now that we know what fields we want, go get them
+          $cst_obj = false;
+          if (variable_get('netforum_xweb_od', 1) == 0) { //Enterprise only gets the query
+            //check to see if  any of the customer fields are different from the information in the DB
+            $query = Array('szObjectName' => 'Customer',
+                  'szColumnList' => implode(", ", $cst_fields),
+                  'szWhereClause' => "cst_key = '". $account->cst_key ."'",
+                  'szOrderBy' => '');
+            $response = netforum_xweb_request('GetQuery', $query, '3 seconds'); //do not look for cached results to this query longer than this request
+            if ($response && $response->attributes()->recordReturn == 1) {
+              $cst_obj = $response->CustomerObject;
+            }
+          }
+          else { //This is the NF OD Section
+            //For netFORUM Team/Pro/On Demand use the data returned from CheckEWebUser
+            global $_netforum_auth_eweb_od_user;
+      	    if (isset($_netforum_auth_eweb_od_user)) {
+      	      $cst_obj = $_netforum_auth_eweb_od_user;
+    	      }
+    	      else {
+    	        //b86fc0da-7a04-4f5b-8a9e-564a53253924
+              $query = Array('szObjectName' => 'Customer',
+                    'sz' => implode(", ", $cst_fields),
+                    'szWhereClause' => "cst_key = '". $account->cst_key ."'",
+                    'szOrderBy' => '');
+              
 
-          if ($response && $response->attributes()->recordReturn == 1) {
-            $cst_obj = $response->CustomerObject; 
-            
+              $arguments = array(
+                'szObjectName' => "Customer",
+                'szObjectKey' => $account->cst_key,
+              );
+              $response = netforum_xweb_request('GetFacadeObject', $arguments, '3 seconds'); //do not look for cached results to this query longer than this request
+              if ($response && $response->attributes()->recordReturn == 1) {
+                $cst_obj = $response->CustomerObject;
+              } 
+    	      }
+          }
+          
+          // If either of the above calls to get user data succeeded, load up the account
+          if ($cst_obj) {
             $email = (string)$cst_obj->{$eml_field};
             if ($account->mail != $email ) {
               $new_info['mail'] = $email;
@@ -768,7 +796,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
               }
             }
           }
-          
+
           if (count($new_info) > 0) {
             user_save($account, $new_info);
           }
@@ -778,6 +806,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       
     case 'login':
       global $_netforum_auth_must_change_pw;
+      
       if ($_netforum_auth_must_change_pw === true) {
         $current_path = isset($_GET['q']) ? $_GET['q'] : '';
         $edit_path = 'user/'. $account->uid .'/edit';
@@ -785,7 +814,9 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
           drupal_set_message('Your password needs to be reset, please do so now by clicking '. l('here', $edit_path), 'error');
         }
       }
-      if (netforum_is_empty_guid($account->cst_key) === false) {
+      //Shared SSO is Enterprise only
+      if (variable_get('netforum_xweb_od', 1) == 0 && netforum_is_empty_guid($account->cst_key) === false) {
+        
         netforum_auth_eweb_sso_login();
         
         $shared_sso_url = variable_get('netforum_auth_shared_sso_url', '');
@@ -802,15 +833,23 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       }
       break;
       
-    case 'logout':
+    case 'logout': //Enterprise only
       if (netforum_is_empty_guid($account->cst_key) === false) {
         netforum_auth_eweb_sso_logout();
+        unset($_SESSION['_netforum_auth_eweb_pw']);
       }
       break;
       
     case 'insert':
       global $_netforum_auth_token, $_netforum_auth_cst_key, $_netforum_auth_eweb_od_user;
-      if (netforum_is_empty_guid($_netforum_auth_token) === false) { //This is only set in the enterprise version
+      
+      $nf_user_data = array(); //The goal is to populate this so we can add in the new user
+      $eml_field = _netforum_auth_get_email_field('Customer');
+      $needed_columns = array_unique(array('cst_type', 'cst_web_password', 'cst_id') + netforum_auth_user_fields());
+      
+      
+      //For Enterprise netforum
+      if (netforum_is_empty_guid($_netforum_auth_token) === false) { 
         $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_netforum_auth_token));
         if (is_null($result) || isset($result->WebValidateResult) === false ) {
           drupal_set_message(t('Could not fetch netFORUM information for new user'), 'error');
@@ -820,51 +859,61 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
           $_netforum_auth_cst_key =  (string)$result->WebValidateResult;
           $_netforum_auth_token = null; //unset this so we don't keep calling xweb
         }
-	    }
-	    
-	    //This is set if they are using OD
-	    if (isset($_netforum_auth_eweb_od_user)) {
-	      $_netforum_auth_cst_key = $_netforum_auth_eweb_od_user->cst_key;
-	    }
-	    
-      if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) {
-        $nf_user_data = array();
         
-        $eml_field = _netforum_auth_get_email_field('Customer');
+        if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) { 
 
-        $query = Array('szObjectName' => 'Customer',
-                'szColumnList' => 'cst_type, '. $eml_field .', cst_web_password, cst_id',
-                'szWhereClause' => "cst_key = '". $_netforum_auth_cst_key ."'",
-                'szOrderBy' => '');
-        $response = netforum_xweb_request('GetQuery', $query);
-        if (isset($response) && $response->attributes()->recordReturn == 1) {
-          $cst_obj = $response->CustomerObject;
-          $nf_user_data = Array(
-            'cst_key' => $_netforum_auth_cst_key,
-            'mail' => (string)$cst_obj->{$eml_field},
-            'cst_type' => (string)$cst_obj->cst_type,
-            'cst_id' => (string)$cst_obj->cst_id,
-            'cst_web_password' => (string)$cst_obj->cst_web_password,
-          );
-          $edit['cst_web_password'] = (string)$cst_obj->cst_web_password;
+          $query = Array('szObjectName' => 'Customer',
+                  'szColumnList' => $eml_field .", ". implode($needed_columns, ", "),
+                  'szWhereClause' => "cst_key = '". $_netforum_auth_cst_key ."'",
+                  'szOrderBy' => '');
+          $response = netforum_xweb_request('GetQuery', $query);
+          if (isset($response) && $response->attributes()->recordReturn == 1) {
+            $cst_obj = $response->CustomerObject;
+            $nf_user_data = Array(
+              'cst_key' => $_netforum_auth_cst_key,
+              'mail' => (string)$cst_obj->{$eml_field},
+            );
+            foreach($needed_columns as $col) {
+              $nf_user_data[$col] = (string)$cst_obj->{$col};
+            }
+            $nf_user_data['cst_web_password'] = (string)$cst_obj->cst_web_password;
+          }
+          else {
+            $nf_user_data['cst_key'] = $_netforum_auth_cst_key;
+          }
         }
-        else {
-          $nf_user_data['cst_key'] = $_netforum_auth_cst_key;
+      
+	    }
+	    
+	    //For netFORUM Team/Pro/On Demand use the data returned from CheckEWebUser
+	    if (isset($_netforum_auth_eweb_od_user)) {
+	      $nf_user_data = Array(
+          'cst_key' => (string)$_netforum_auth_eweb_od_user->cst_key,
+          'mail' => (string)$_netforum_auth_eweb_od_user->{$eml_field},
+        );
+        foreach($needed_columns as $col) {
+          $nf_user_data[$col] = (string)$_netforum_auth_eweb_od_user->{$col};
         }
-        
+        $nf_user_data['cst_web_password'] = (string)$_netforum_auth_eweb_od_user->cst_web_password;
+	    }
+	    
+      
+      if ($nf_user_data) {
         user_save($account, $nf_user_data);
       }
+      
       
       break;
       
     case 'update':
       if ( netforum_is_empty_guid($account->cst_key) === false) { 
-        if (variable_get('netforum_xweb_od', 1) == 0) { //Only updated if we're hava access to the updates
+        if (variable_get('netforum_xweb_od', 1) == 0) { //We only push data back to Enterprise netforum
+          $eml_field = _netforum_auth_get_email_field('Customer');
           //this array keeps key => value pairs to correspond to the netFORUM information to be updated.
           $nf_variables = array();
           if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) == '<drupal>') {
             if (isset($edit['mail']) && $edit['mail'] != '' && $edit['mail'] != $account->mail) {
-              $nf_variables['eml_address'] = $edit['mail'];
+              $nf_variables[$eml_field] = $edit['mail'];
             }
             if (isset($edit['pass']) && $edit['pass'] != '') {
               $nf_variables['cst_web_password'] = $edit['pass'];
@@ -951,35 +1000,41 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
  */
 function netforum_auth_categories() {  
   $categories = array();
-  // If no modules implement the netforum_auth_categories hook, set it to be based on membership
-  if ( count(module_implements('netforum_auth_categories')) == 0 ) {
-    if (variable_get('netforum_xweb_od', 1) == 0){ //in enterprise this works
+  if (variable_get('netforum_xweb_od', 1) == 0){ //in enterprise this works
+    // If no modules implement the netforum_auth_categories hook, set it to be based on membership
+    if ( count(module_implements('netforum_auth_categories')) == 0 ) {
 	    $query_params = array(
   	    'szObjectName' => 'mb_member_type',
   	    'szColumnList' => 'mbt_key, mbt_code',
   	    'szWhereClause' => 'mbt_delete_flag = 0',
   	    'szOrderBy' => 'mbt_code asc',
   	  );
-	    
+    
   	  $response = netforum_xweb_request("GetQuery", $query_params);  
   	  if (isset($response->attributes()->recordReturn) AND $response->attributes()->recordReturn > 0 ) {
   	    foreach ($response->mb_member_typeObject as $mbt) {
   	      $categories[(string)$mbt->mbt_key] = $mbt->mbt_code;
   	    }
   	  }
-	  }
-	  else{
+  	}
+	  else {
+      //Call the hook_netforum_auth_user_categories.
+      $categories = module_invoke_all('netforum_auth_categories');
+    }
+  }
+  else{
+    if ( count(module_implements('netforum_auth_od_categories')) == 0 ) {
 	    //if using on demand implement a fixed list of groups
 	    $categories['cst_member_flag'] = t('Member Flag Set');
 	    $categories['cst_life_member_flag'] = t('Life Member Flag Set');
 	    $categories['cst_receives_benefits_flag'] = t('Receives Benefits Flag Set');
-	    $categories['cst_donot_receive_benefits_flag'] = t('Do Not Receive Benefits Flag Set');
 	  }
+	  else {
+      //Call the hook_netforum_auth_user_categories.
+      $categories = module_invoke_all('netforum_auth_od_categories');
+    }  	
   }
-  else {
-    //Call the hook_netforum_auth_user_categories.
-    $categories = module_invoke_all('netforum_auth_categories');
-  }
+  
   return $categories;
 }
 
@@ -1004,26 +1059,35 @@ function netforum_auth_user_categories($account) {
     return $user_categories;
   }
   
-  
-  // If no modules implement the hook, set it to be based on membership
-  if ( count(module_implements('netforum_auth_user_categories')) == 0 ) {
     if (variable_get('netforum_xweb_od', 1) == 0){ //in enterprise this works
-      $query_params = array(
-        'szObjectName' => 'MembershipProxy',
-        'szColumnList' => 'mbr_mbt_key',
-        'szWhereClause' => "cst_key = '". $account->cst_key ."' AND (mbr_expire_date >= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
-      );
+      // If no modules implement the hook, set it to be based on membership
+      if ( count(module_implements('netforum_auth_user_categories')) == 0 ) {
+        $query_params = array(
+          'szObjectName' => 'MembershipProxy',
+          'szColumnList' => 'mbr_mbt_key',
+          'szWhereClause' => "cst_key = '". $account->cst_key ."' AND (mbr_expire_date >= '". strftime("%Y-%m-%d") ."' OR mbr_expire_date is null)",
+        );
     
-      $response = netforum_xweb_request("GetQuery", $query_params);
+        $response = netforum_xweb_request("GetQuery", $query_params);
     
-      if (isset($response) AND $response->attributes()->recordReturn > 0 ) {
-        netforum_auth_fresh_user_categories(true); //Important step!  Note that we have valid categories
-        foreach ($response->MembershipProxyObject as $mpr) {
-          $user_categories[] = (string)$mpr->mbt_key;
+        if (isset($response) ){
+          netforum_auth_fresh_user_categories(true); //Important step!  Note that we have checked
+          if ($response->attributes()->recordReturn > 0 ) {
+            foreach ($response->MembershipProxyObject as $mpr) {
+              $user_categories[] = (string)$mpr->mbt_key;
+            }
+          }
         }
       }
+      else {
+        // call the hook_netforum_auth_user_categories function in any modules that implement it. 
+        // Remember that each module that implements this must also call netforum_auth_fresh_user_categories($is_fresh_response) 
+        // and specify if the user categories are valid or not. 
+        $user_categories = module_invoke_all('netforum_auth_user_categories', $account );
+      } 
     }
-    else {
+  else {
+    if ( count(module_implements('netforum_auth_od_user_categories')) == 0 ) {
       //When using NF OD use a fixed list of groups
       netforum_auth_fresh_user_categories(true); //Important step!  Note that we have valid categories
       $categories = array('cst_member_flag',
@@ -1036,15 +1100,12 @@ function netforum_auth_user_categories($account) {
         }
       }
     }
+    else {
+      $user_categories = module_invoke_all('netforum_auth_od_user_categories', $account );
+    }
+  }
     
-  }
-  else {
-    // call the hook_netforum_auth_user_categories function in any modules that implement it. 
-    // Remember that each module that implements this must also call netforum_auth_fresh_user_categories($is_fresh_response) 
-    // and specify if the user categories are valid or not. 
-    $user_categories = module_invoke_all('netforum_auth_user_categories', $account );
-  }
-  
+
   return $user_categories;
 }
 
@@ -1155,6 +1216,10 @@ function netforum_auth_eweb_sites($sitecode_only = false) {
  *  The user object of the user to log in, defaults to the global $user object
  */
 function netforum_auth_eweb_sso_login($account = '') {
+  if (variable_get('netforum_xweb_od', 1) == 0) {
+    watchdog('netforum', t('Cannot perform eWeb SSO login for non-enterprise versions of netforum'), WATCHDOG_WARNING);
+    return;
+  }
   if ($account == '') {
     global $user;
     $account = $user;
@@ -1173,22 +1238,16 @@ function netforum_auth_eweb_sso_login($account = '') {
   }
 
   $login_web_codes = array();
-  if (variable_get('netforum_xweb_od', 1) == 0) {
-    $selected_sites = variable_get('netforum_auth_eweb_sso', array());
-    $do_it_all = false;
-    if ( isset($selected_sites['ALL']) && ($selected_sites['ALL'] == 'ALL' || $selected_sites['ALL'] == 1)) {
-      $do_it_all = true;
-    }
-    //we pass true to the eweb_sites function to get only the web code and not the entire description
-    foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
-      if ($selected_sites[$web_key] == $web_key || $do_it_all === true || $selected_sites[$web_key] == 1) {
-        $login_web_codes[] = $web_code;
-      }
-    }
+  $selected_sites = variable_get('netforum_auth_eweb_sso', array());
+  $do_it_all = false;
+  if ( isset($selected_sites['ALL']) && ($selected_sites['ALL'] == 'ALL' || $selected_sites['ALL'] == 1)) {
+    $do_it_all = true;
   }
-  else { //We're OD, so only one site code to login to
-    $web_code = variable_get('netforum_auth_eweb_sso_sitecode','');
-    $login_web_codes[] = $web_code;
+  //we pass true to the eweb_sites function to get only the web code and not the entire description
+  foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
+    if ($selected_sites[$web_key] == $web_key || $do_it_all === true || $selected_sites[$web_key] == 1) {
+      $login_web_codes[] = $web_code;
+    }
   }
 
   foreach ($login_web_codes as $web_code) {
@@ -1201,6 +1260,9 @@ function netforum_auth_eweb_sso_login($account = '') {
  * Delete the cookies set for SSO login and optionally direct the user to the eWeb logout page
  */
 function netforum_auth_eweb_sso_logout() {
+  if (variable_get('netforum_xweb_od', 1) == 0 ) {
+    return;
+  }
   foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
     setcookie($web_code .'cstid', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     setcookie($web_code .'pw', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
@@ -1215,8 +1277,45 @@ function netforum_auth_eweb_sso_logout() {
  * Fetch an authentication token if needed and transfer the user to the netFORUM on Demand page
  */
 function netforum_auth_od_sso_transfer() {
-  print_r($_GET['loc']);
-  print "You made it!!!!";
+  global $user;
+  $external = htmlspecialchars_decode(urldecode($_GET['loc']));
+
+  if (variable_get('netforum_xweb_od', 0) == 1 && netforum_is_valid_guid($user->cst_key)) { 
+    $wsdl_url = variable_get('netforum_wsdl_url', "");
+    $wsdl_url = str_ireplace("netForumXMLOnDemand.asmx", "Signon.asmx", $wsdl_url);
+    
+    $ssos = new SoapClient($wsdl_url, 
+        		Array('trace'=>true, //turning on trace=true will let us grab the headers and responses
+        			'exceptions'=>true,)
+        		);
+    try {
+      $auth_token = "";
+      $sso_token = "";
+      $auth_response = $ssos->Authenticate(array('userName' => variable_get('netforum_xweb_username', null), 'password' => variable_get('netforum_xweb_password', null)));
+      if (isset($auth_response) && isset($auth_response->AuthenticateResult)) {
+        $auth_token = $auth_response->AuthenticateResult;
+      }
+
+      if ($auth_token != "") {
+        $signon_params = array('Email' => $user->name, 'Password' => $_SESSION['_netforum_auth_eweb_pw'], 'AuthToken' => $auth_token, 'Minutes' => 1);
+        $sso_response = $ssos->GetSignonToken($signon_params);
+
+        if (isset($sso_response) && isset($sso_response->GetSignOnTokenResult)) {
+          $sso_token = $sso_response->GetSignOnTokenResult;
+        }
+        
+        //All that for this wee little token
+        $external = $external . "&" . $sso_token;
+      }
+    }
+    catch(SoapFault $exception) { //anything goes wrong w/ method parameters and we get here.
+      watchdog('netforum', t("Could not do netFORUM On Demand SSO for user %username. !error", array('%username' => $user->name, '!error' => $exception)), WATCHDOG_ERROR);
+      exit;
+    }
+    
+  }
+
+  drupal_goto($external);
 }
 
 /**
@@ -1384,7 +1483,7 @@ function netforum_authentication_form_alter($form_id, &$form) {
 function netforum_authentication_filter($op, $delta = 0, $format = -1, $text = '') {
   
   $od_domain = "netforumondemand.com";
-  
+
   switch ($op) {
     case 'list':
       return array(0 => t('netFORUM OnDemand SSO Filter'));
@@ -1450,9 +1549,14 @@ Visit the !netforum_auth_settings_page to configure the module, and the !netforu
 </p>
 
 <p>
-To allow other sites to log onto an eweb site with this domain, make sure you check off Allow other drupal sites to share this domain for SSO in the settings page and type in a shared secret password.
+Enterpise Only: To allow other sites to log onto an eweb site with this domain, make sure you check off Allow other drupal sites to share this domain for SSO in the settings page and type in a shared secret password.
 On the sites that should use this domain, enter the same shared password and the full address of this website.  More than one website can use this domain for SSO as long as they all have the same shared password.
 If using a shared sso url, the sso cookie domain and eweb sites are optional, and the settings on the remote site will be used instead.
+</p>
+
+<p>
+Team/Pro only: The netFORUM Authentication module comes with a filter that will re-write URLs going to the netFORUM eWeb pages for things like event registration.  The rewrite will ensure that
+users who are logged in are transferred to the netFORUM site along with an authentication token which keeps them from having to log in on both sites.
 </p>
 
 ', array('!cache_clear' => l(t('menu cache'), 'admin/settings/netforum/clearcache'), '!netforum_auth_settings_page' => l(t('netFORUM Authentication settings page'), 'admin/user/netforum-authentication'), '!netforum_auth_roles_page' => l(t('netFORUM User Roles'), 'admin/user/netforum-roles')));
