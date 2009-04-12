@@ -1,6 +1,6 @@
 For extending, there are three hook functions:
 
-hook_netforum_auth_categories()
+hook_netforum_auth_categories() / hook_netforum_auth_od_categories()
 hook_netforum_auth_user_categories($cst_key, &$apply_results)
 hook_netforum_auth_user_fields()
 

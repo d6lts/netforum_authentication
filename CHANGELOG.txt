@@ -2,6 +2,7 @@ Changes from 5.x-0.8-8
 - Fixed bug w/ local password hashing
 - Now plays nicely with systems that have login by email set
 - Now plays nicely with netFORUM Team and Pro
+- New URL filter for Team and Pro redirects
 
 Changes from 5.x-0.8-7
 - Fixed bug when loading user groups
