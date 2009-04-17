@@ -1,6 +1,85 @@
 <?php
 // $Id$
 
+/* TODO FormAPI image buttons are now supported.
+   FormAPI now offers the 'image_button' element type, allowing developers to
+   use icons or other custom images in place of traditional HTML submit buttons.
+
+$form['my_image_button'] = array(
+  '#type'         => 'image_button',
+  '#title'        => t('My button'),
+  '#return_value' => 'my_data',
+  '#src'          => 'my/image/path.jpg',
+); */
+
+/* TODO Remove db_num_rows() method
+   The db_num_rows() method was removed from the database abstraction layer in
+   6.x core, as it was a database dependent method. Developers need to use other
+   handling to replace the needs of this method. */
+
+/* TODO Change 'Submit' to 'Save' on buttons
+   It has been agreed on that the description 'Submit' for a button is not a
+   good choice since it does not indicate what actually happens. While for
+   example on node editing forms, 'Preview' and 'Delete' describe exactly what
+   will happen when the user clicks on the button, 'Submit' only gives a vague
+   idea. When labelling your buttons, make sure that it is clear what this
+   button does when the user clicks on it. */
+
+/* TODO hook_user('view')
+   The return value of hook_user('view') has changed, to match the process that
+   nodes use for rendering. Modules should add their custom HTML to
+   $account->content element. Further, this HTML should be in the form that
+   drupal_render() recognizes. */
+
+/* TODO New user_mail_tokens() method may be useful.
+   user.module now provides a user_mail_tokens() function to return an array
+   of the tokens available for the email notification messages it sends when
+   accounts are created, activated, blocked, etc. Contributed modules that
+   wish to make use of the same tokens for their own needs are encouraged
+   to use this function. */
+
+/* TODO
+   There is a new hook_watchdog in core. This means that contributed modules
+   can implement hook_watchdog to log Drupal events to custom destinations.
+   Two core modules are included, dblog.module (formerly known as watchdog.module),
+   and syslog.module. Other modules in contrib include an emaillog.module,
+   included in the logging_alerts module. See syslog or emaillog for an
+   example on how to implement hook_watchdog.
+function example_watchdog($log = array()) {
+  if ($log['severity'] == WATCHDOG_ALERT) {
+    mysms_send($log['user']->uid,
+      $log['type'],
+      $log['message'],
+      $log['variables'],
+      $log['severity'],
+      $log['referer'],
+      $log['ip'],
+      format_date($log['timestamp']));
+  }
+} */
+
+/* TODO Implement the hook_theme registry. Combine all theme registry entries
+   into one hook_theme function in each corresponding module file.
+function netforum_authentication_theme() {
+  return array(
+  );
+} */
+
+/* TODO $form['#base'] is gone
+   In FormAPI, many forms with different form_ids can share the same validate,
+   submit, and theme handlers. This can be done by manually populating the
+   $form['#submit'], $form['#validate'], and $form['#theme'] elements with
+   the proper function names. */
+
+/* TODO You may want to take advantage of new form-specific alter hooks.
+   The hook_form_alter() is complemented by hook_form_$form-id_alter().
+   Optionally, modules can implement form-specific alteration functions rather
+   than a single hook_form_alter() with many conditional switch statements.
+   This is optional, and is most useful for tidying the code of modules that
+   alter many forms to customize a site's operations.
+   The new function names are built using the following format:
+   [your-module-name]_form_[$form_id]_alter. */
+
 //TODO:  There are two places still calling GetQuery w/o regard to OD or Enterprise.  One for the forgot password section,
 // and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
 // to use a separate function to get user data.  Maybe not load data on login?
@@ -16,54 +95,72 @@ if ($_SESSION['netforum_auth_link']) {
 /**
  * Implementation of hook_menu()
  */
-function netforum_authentication_menu($may_cache) {
+function netforum_authentication_menu() {
   $items = array();
   global $user;
   
+/* TODO
+   Non menu code that was placed in hook_menu under the '!$may_cache' block
+   so that it could be run during initialization, should now be moved to hook_init.
+   Previously we called hook_init twice, once early in the bootstrap process, second
+   just after the bootstrap has finished. The first instance is now called boot
+   instead of init.
+   
+   In Drupal 6, there are now two hooks that can be used by modules to execute code
+   at the beginning of a page request. hook_boot() replaces hook_boot() in Drupal 5
+   and runs on each page request, even for cached pages. hook_boot() now only runs
+   for non-cached pages and thus can be used for code that was previously placed in
+   hook_menu() with $may_cache = FALSE:
+   
+   Dynamic menu items under a '!$may_cache' block can often be simplified
+   to remove references to arg(n) and use of '%<function-name>' to check
+   conditions. See http://drupal.org/node/103114.
+   
+   The title and description arguments should not have strings wrapped in t(),
+   because translation of these happen in a later stage in the menu system.
+*/
   if ($may_cache) {
-    $items[] = array(
-      'path' => 'admin/user/netforum-authentication',
-      'title' => t('netFORUM user authentication'),
-      'description' => t('Set the authentication settings for netFORUM customers'),
-      'callback' => 'drupal_get_form',
-      'callback arguments' => array('netforum_auth_admin_settings'),
-      'access' => user_access('administer site configuration'),
+    $items['admin/user/netforum-authentication'] = array(
+      'title' => 'netFORUM user authentication',
+      'description' => 'Set the authentication settings for netFORUM customers',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('netforum_auth_admin_settings'),
+      'access arguments' => array('administer site configuration'),
     );
     
-    $items[] = array(
-      'path' => 'admin/user/netforum-roles',
-      'title' => t('netFORUM user roles'),
-      'description' => t('Choose what site roles are given to netFORUM users'),
-      'callback' => 'drupal_get_form',
-      'callback arguments' => array('netforum_auth_role_settings'),
-      'access' => user_access('administer site configuration') || user_access('administer access control'),
+    $items['admin/user/netforum-roles'] = array(
+      'title' => 'netFORUM user roles',
+      'description' => 'Choose what site roles are given to netFORUM users',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('netforum_auth_role_settings'),
+      'access arguments' => array('administer site configuration') || user_access('administer permissions'),
     );
     
-    $items[] = array('path' => 'admin/settings/netforum/clearcache',
-      'title' => t('Clear menu cache'),
-      'callback' => 'netforum_auth_cache_clear',
-      'access' => user_access('administer site configuration'),
+    $items['admin/settings/netforum/clearcache'] = array(
+      'title' => 'Clear menu cache',
+      'page callback' => 'netforum_auth_cache_clear',
+      'access arguments' => array('administer site configuration'),
       'type' => MENU_CALLBACK,
     );
     
-    $items[] = array('path' => 'user/netforum_sso_check',
-      'title' => t('netFORM Authentication Shared SSO Check'),
-      'callback' => 'netforum_auth_shared_sso_check',
-      'access' => true,
+    $items['user/netforum_sso_check'] = array(
+      'title' => 'netFORM Authentication Shared SSO Check',
+      'page callback' => 'netforum_auth_shared_sso_check',
+      'access arguments' => true,
       'type' => MENU_CALLBACK,
     );
     
-    $items[] = array('path' => 'user/netforum_sso_share',
-      'title' => t('netFORM Authentication Shared SSO'),
-      'callback' => 'netforum_auth_shared_sso_login',
-      'access' => true,
+    $items['user/netforum_sso_share'] = array(
+      'title' => 'netFORM Authentication Shared SSO',
+      'page callback' => 'netforum_auth_shared_sso_login',
+      'access arguments' => true,
       'type' => MENU_CALLBACK,
     );
     
-    $items[] = array('path' => 'nf_od_sso_transfer',
-      'title' => t('Transfer to netFORUM OD w/ SSO'),
-      'callback' => 'netforum_auth_od_sso_transfer',
-      'access' => true,
+    $items['nf_od_sso_transfer'] = array(
+      'title' => 'Transfer to netFORUM OD w/ SSO',
+      'page callback' => 'netforum_auth_od_sso_transfer',
+      'access arguments' => true,
       'type' => MENU_CALLBACK,
     );
     
@@ -72,22 +169,32 @@ function netforum_authentication_menu($may_cache) {
     // order of the modules to make sure netFORUM loads AFTER the user module.  Load order is determined by weight in the 
     //system table and it should be set automatically on installation
     if (strtolower(variable_get('netforum_auth_forgotten_password', '<drupal>')) != '<drupal>' || variable_get('netforum_auth_forgot_password_add', 0) == 1) {
-      $items[] = array('path' => 'user/password', 'title' => t('Request new password'),
-      'callback' => 'netforum_auth_forgotten_password_redirect', 'callback arguments' => array('user_pass'), 'access' => !$user->uid, 'type' => MENU_LOCAL_TASK);
+      $items['user/password'] = array(
+        'title' => 'Request new password',
+        'page callback' => 'netforum_auth_forgotten_password_redirect', 
+        'page arguments' => array('user_pass'), 
+        'access arguments' => !$user->uid, 'type' => MENU_LOCAL_TASK);
     }
     
     if (strtolower(variable_get('netforum_auth_user_register', '<drupal>')) != '<drupal>') {
-     $items[] = array('path' => 'user/register', 'title' => t('Create new account'),
-      'callback' => 'netforum_auth_user_register_redirect', 'callback arguments' => '', 'access' => !$user->uid && variable_get('user_register', 1), 'type' => MENU_LOCAL_TASK);
+     $items['user/register'] = array(
+      'title' => 'Create new account',
+      'page callback' => 'netforum_auth_user_register_redirect', 
+      'page arguments' => '', 
+      'access arguments' => !$user->uid && variable_get('user_register', 1), 
+      'type' => MENU_LOCAL_TASK);
     }
     
   }
   else{
     if ( (arg(0) == 'user' && is_numeric(arg(1)) && arg(1) > 0)  && $user !== FALSE) {
       if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
-       $items[] = array('path' => 'user/'. arg(1) .'/edit', 'title' => t('Edit'),
-            'callback' => 'netforum_auth_user_editing_redirect', 'callback arguments' => '',
-            'access' => user_access('administer users') || $user->uid == arg(1), 'type' => MENU_LOCAL_TASK);
+       $items['user/'. '%' .'/edit'] = array(
+          'title' => 'Edit',
+          'page callback' => 'netforum_auth_user_editing_redirect', 
+          'page arguments' => '',
+          'access arguments' => array('administer users') || $user->uid == arg(1), 
+          'type' => MENU_LOCAL_TASK);
       }
     }
   }
@@ -154,8 +261,8 @@ function netforum_auth_user_register_redirect() {
  * not logged in to request a password.  Really we overwrite it because we want our own validation form.
  * @ingroup forms
  */
-function netforum_auth_user_pass() {
-  $form = user_pass() ;
+function netforum_auth_user_pass(&$form_state) {
+  $form = user_pass($form_state) ;
   $form['#validate'] = array('netforum_auth_user_pass_validate' => array());
   $form['#submit'] = array('user_pass_submit' => array());
   return $form;
@@ -169,8 +276,15 @@ function netforum_auth_user_pass() {
  * then it creates a new drupal user and declares netforum_authentication to be the authentication
  * module.  That way they can reset their password if using drupal's password reset function
  */
-function netforum_auth_user_pass_validate($form_id, $form_values) {
-  $name = $form_values['name'];
+function netforum_auth_user_pass_validate($form, &$form_state) {
+/* TODO Validation handlers can pass information to submit handlers
+   Previously, it was necessary to embed validated results in the $form_values 
+   to carry them over from validation to submission. Now, though, validation 
+   handlers can simply place them into $form_state. This keeps the new 
+   $form_state['values'] clean, and ensures that it always represents the data 
+   submitted by the web user. */
+
+  $name = $form_state['values']['name'];
   $account = user_load(array('mail' => $name, 'status' => 1));
   if (!$account) {
     $account = user_load(array('name' => $name, 'status' => 1));
@@ -196,11 +310,11 @@ function netforum_auth_user_pass_validate($form_id, $form_values) {
       $userinfo = array('name' => $cst_name, 'mail' => $cst_mail, 'pass' => user_password(), 'cst_key' => $cst_key, 'cst_type' => $cst_type, 'init' => $name, 'status' => 1 );
       $userinfo["authname_netforum_authentication"] = $name;
       $account = user_save('', $userinfo);
-      watchdog('user', t('New external user: %user using module %module.', array('%user' => $name, '%module' => 'netforum_authentication')), WATCHDOG_NOTICE, l(t('edit'), 'user/'. $user->uid .'/edit'));
+      watchdog('user', 'New external user: %user using module %module.', array('%user' => $name, '%module' => 'netforum_authentication'), WATCHDOG_NOTICE, l(t('edit'), 'user/'. $user->uid .'/edit'));
     }
   }
   if ($account->uid) {
-    form_set_value(array('#parents' => array('account')), $account);
+    form_set_value(array('#parents' => array('account')), $account, $form_state);
   }
   else {
     form_set_error('name', t('Sorry, %name is not recognized as a user name or an email address.', array('%name' => $name)));
@@ -300,7 +414,7 @@ function netforum_auth_admin_settings() {
       '#title' => t('SSO logout URL'),
       '#type' => 'textfield',
       '#description' => t('When a user logs out of drupal any netFORUM cookies set for the domain above will be deleted, but the user can also be directed to a url that will log them out of eWeb such as http://eweb.example.com/eWeb/Logout.aspx .  If this is set to &lt;drupal&gt; then only the cookies will be removed, and the user will be logged out of eWeb when they close the browser.'),
-      '#validate' => array('netforum_valid_sso_logout' => array()),
+      '#validate' => array('netforum_valid_sso_logout'),
       '#size' => 40,
       '#default_value' => variable_get('netforum_auth_sso_logout_url', '<drupal>'),
     );
@@ -332,28 +446,28 @@ function netforum_auth_admin_settings() {
   return system_settings_form($form);
 }
 
-function netforum_auth_admin_settings_validate($form_id, $form_values) {
-  if (($form_values['netforum_auth_shared_sso'] == 1 || $form_values['netforum_auth_shared_sso_url'] != '') && trim($form_values['netforum_auth_shared_sso_secret']) == '' ) {
+function netforum_auth_admin_settings_validate($form, &$form_state) {
+  if (($form_state['values']['netforum_auth_shared_sso'] == 1 || $form_state['values']['netforum_auth_shared_sso_url'] != '') && trim($form_state['values']['netforum_auth_shared_sso_secret']) == '' ) {
     form_set_error('netforum_auth_shared_sso_secret', t('The shared secret is required when using this domain for shared sso'));
   }
   else {
     $secret_okay = true;
   }
   
-  if (trim($form_values['netforum_auth_shared_sso_url']) != ''  && substr($form_values['netforum_auth_shared_sso_url'], 0, 7) != 'http://' && substr($form_values['netforum_auth_shared_sso_url'], 0, 8) != 'https://') {
+  if (trim($form_state['values']['netforum_auth_shared_sso_url']) != ''  && substr($form_state['values']['netforum_auth_shared_sso_url'], 0, 7) != 'http://' && substr($form_state['values']['netforum_auth_shared_sso_url'], 0, 8) != 'https://') {
     form_set_error('netforum_auth_shared_sso_url', t('Shared SSO url must start with http:// or https://'));
   }
   else {
     $url_okay = true;
   }
   
-  if ( $secret_okay === true && $url_okay === true && trim($form_values['netforum_auth_shared_sso_url']) != ''  ) {
+  if ( $secret_okay === true && $url_okay === true && trim($form_state['values']['netforum_auth_shared_sso_url']) != ''  ) {
     if (ini_get('allow_url_fopen')) {
-      $check_url = $form_values['netforum_auth_shared_sso_url'];
+      $check_url = $form_state['values']['netforum_auth_shared_sso_url'];
       if (substr($check_url, -1) != '/') {
         $check_url .= "/";
       }
-      $token = md5("netFORUMAUTHINTERNAL". $form_values['netforum_auth_shared_sso_secret']);
+      $token = md5("netFORUMAUTHINTERNAL". $form_state['values']['netforum_auth_shared_sso_secret']);
       $check_url .= "user/netforum_sso_check/". $token;
       $remote_site_response = file_get_contents($check_url);
       if (stristr($remote_site_response, "<checkresult>1</checkresult>") === FALSE) {
@@ -362,7 +476,7 @@ function netforum_auth_admin_settings_validate($form_id, $form_values) {
     }
   }
   
-  if (strtolower($form_values['netforum_auth_user_register']) != '<drupal>' || strtolower($form_values['netforum_auth_forgotten_password']) != '<drupal>' || strtolower($form_values['netforum_auth_user_editing']) != '<drupal>') {
+  if (strtolower($form_state['values']['netforum_auth_user_register']) != '<drupal>' || strtolower($form_state['values']['netforum_auth_forgotten_password']) != '<drupal>' || strtolower($form_state['values']['netforum_auth_user_editing']) != '<drupal>') {
     cache_clear_all('*', 'cache_menu', TRUE);
   }
 }
@@ -412,14 +526,14 @@ function netforum_auth_role_settings() {
   return $form;
 }
 
-function netforum_auth_role_settings_submit($form_id, $form_values) {
+function netforum_auth_role_settings_submit($form, &$form_state) {
   $netforum_auth_roles = array();
   
   foreach (array_diff_key(user_roles(), netforum_auth_ignore_roles()) as $rid => $role) {
     $element = 'netforum_auth_roles_'. $rid;
     $netforum_auth_roles[$rid] = array();
-    if (isset($form_values[$element]) && is_array($form_values[$element])) {
-      foreach ($form_values[$element] as $key => $check_val) {
+    if (isset($form_state['values'][$element]) && is_array($form_state['values'][$element])) {
+      foreach ($form_state['values'][$element] as $key => $check_val) {
         if ((string)$key == (string)$check_val) {
           $netforum_auth_roles[$rid][] = $key;
         }
@@ -528,7 +642,7 @@ function netforum_auth_shared_sso_login($cstid = '', $cstid_token = '', $pw_toke
  *
  */
 function _netforum_auth_make_cstid_token($cstid = ''){
-  return md5(variable_get('netforum_auth_shared_sso_secret', '') ."evensalt". $_SERVER['REMOTE_ADDR'] .'FreeTokensforall!'. $cstid ."nfautthcstid");
+  return md5(variable_get('netforum_auth_shared_sso_secret', '') ."evensalt". ip_address() .'FreeTokensforall!'. $cstid ."nfautthcstid");
 }
 
 /**
@@ -539,7 +653,7 @@ function _netforum_auth_make_password_token($cst_web_password = '', $timestamp =
   if ($timestamp == '') {
     $timestamp = time();
   }
-  return md5('nfauthpwstr'. $cst_web_password .'oddsalt'. $_SERVER['REMOTE_ADDR'] .'goodfornow'. $timestamp ."looooongstringsalt!". variable_get('netforum_auth_shared_sso_secret', ''));
+  return md5('nfauthpwstr'. $cst_web_password .'oddsalt'. ip_address() .'goodfornow'. $timestamp ."looooongstringsalt!". variable_get('netforum_auth_shared_sso_secret', ''));
 }
 
 /**
@@ -593,7 +707,7 @@ function netforum_authentication_auth($username, $password, $server) {
     }
     else {
       drupal_set_message(t('Could not communicate with authentication server, please try again in a few minutes'), 'error');
-      watchdog('netforum', t("Could not authenticate user %username because the xweb query returned a null result - is the server available and responsive?", array('%username' => $username)), WATCHDOG_ERROR);
+      watchdog('netforum', "Could not authenticate user %username because the xweb query returned a null result - is the server available and responsive?", array('%username' => $username), WATCHDOG_ERROR);
       return false;
     }
   }
@@ -631,7 +745,7 @@ function _netforum_authentication_auth_od($username, $password) {
     }
     else {
       drupal_set_message(t('Could not communicate with authentication server, please try again in a few minutes'), 'error');
-      watchdog('netforum', t("Could not authenticate user %username because the xweb query returned a null result - is the server available and responsive?", array('%username' => $username)), WATCHDOG_ERROR);
+      watchdog('netforum', "Could not authenticate user %username because the xweb query returned a null result - is the server available and responsive?", array('%username' => $username), WATCHDOG_ERROR);
       return false;
     }
   }
@@ -951,7 +1065,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
 	    
             if ($success === false) {
               drupal_set_message(t('Information update failed, please try again in a few minutes.'), 'error');
-              watchdog('netforum', t("Could not update user information in netFORUM for %name", array('%name' => $account->name)), WATCHDOG_ERROR);
+              watchdog('netforum', "Could not update user information in netFORUM for %name", array('%name' => $account->name), WATCHDOG_ERROR);
               $path = isset($_GET['q']) ? $_GET['q'] : '';
               $query = drupal_query_string_encode($_GET, array('q'));
               if ($query != '') {
@@ -1225,7 +1339,7 @@ function netforum_auth_eweb_sites($sitecode_only = false) {
  */
 function netforum_auth_eweb_sso_login($account = '') {
   if (variable_get('netforum_xweb_od', 1) == 0) {
-    watchdog('netforum', t('Cannot perform eWeb SSO login for non-enterprise versions of netforum'), WATCHDOG_WARNING);
+    watchdog('netforum', 'Cannot perform eWeb SSO login for non-enterprise versions of netforum', WATCHDOG_WARNING);
     return;
   }
   if ($account == '') {
@@ -1237,11 +1351,11 @@ function netforum_auth_eweb_sso_login($account = '') {
   }
   
   if ( isset($account->cst_web_password) === false || $account->cst_web_password == '') {
-    watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_web_password associated with user', array('%user' => $account->name)), WATCHDOG_WARNING);
+    watchdog('netforum', 'Could not log user %user onto eWeb sites, no cst_web_password associated with user', array('%user' => $account->name), WATCHDOG_WARNING);
     return false;
   }
   if ( isset($account->cst_id) === false || $account->cst_id == '') {
-    watchdog('netforum', t('Could not log user %user onto eWeb sites, no cst_id associated with user', array('%user' => $account->name)), WATCHDOG_WARNING);
+    watchdog('netforum', 'Could not log user %user onto eWeb sites, no cst_id associated with user', array('%user' => $account->name), WATCHDOG_WARNING);
     return false;
   }
 
@@ -1322,7 +1436,7 @@ function netforum_auth_od_sso_transfer($loc = "") {
       }
     }
     catch(SoapFault $exception) { //anything goes wrong w/ method parameters and we get here.
-      watchdog('netforum', t("Could not do netFORUM On Demand SSO for user %username. !error", array('%username' => $user->name, '!error' => $exception)), WATCHDOG_ERROR);
+      watchdog('netforum', "Could not do netFORUM On Demand SSO for user %username. !error", array('%username' => $user->name, '!error' => $exception), WATCHDOG_ERROR);
       exit;
     } 
   }
@@ -1455,7 +1569,7 @@ function _netforum_auth_get_email_field($obj_name) {
  * Used to prevent uneditable fields from showing for users created
  * through netFORUM On Demand authentication
  */
-function netforum_authentication_form_alter($form_id, &$form) {
+function netforum_authentication_form_alter(&$form, &$form_state, $form_id) {
   global $user;
   if ($form_id == 'user_edit' 
       && variable_get('netforum_xweb_od', 0) == 1 
@@ -1514,7 +1628,7 @@ function netforum_authentication_filter($op, $delta = 0, $format = -1, $text = '
         foreach ($matches as $match) {
           if (stristr($match[2], $od_domain)) {
             $searches[] = $match[2];
-            $replacements[] = url('nf_od_sso_transfer/', "loc=" . urlencode($match[2]));
+            $replacements[] = url('nf_od_sso_transfer/', array('query' => "loc=" . urlencode($match[2])));
           }
         }
         $text = str_replace($searches, $replacements, $text);
@@ -1529,8 +1643,8 @@ function netforum_authentication_filter($op, $delta = 0, $format = -1, $text = '
 /**
  * Implementation of hook_help()
  */
-function netforum_authentication_help($section) {
-switch ($section) {
+function netforum_authentication_help($path, $arg) {
+switch ($path) {
     //case 'admin/help/netforum_authentication':
     case 'admin/help#netforum_authentication':
       $output = t('

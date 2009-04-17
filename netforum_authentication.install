@@ -1,6 +1,42 @@
 <?php
 // $Id$
 
+function netforum_auth_new_fields() {
+  return array(
+    'cst_key' => array(
+      'description' => t('The customer key corresponding to the netFORUM customer'),
+      'type' => 'varchar',
+      'length' => 36,
+      'not null' => FALSE,
+    ),
+    'cst_type' => array(
+      'description' => t('The customer type, namely Individual or Organization'),
+      'type' => 'varchar',
+      'length' => 100,
+      'not null' => FALSE,
+    ),
+    'cst_id' => array(
+      'description' => t('The customer ID'),
+      'type' => 'varchar',
+      'length' => 10,
+      'not null' => FALSE,
+    ),
+    'cst_web_password' => array(
+      'description' => t('The hashed version of the web password in netFORUM'),
+      'type' => 'varchar',
+      'length' => 36,
+      'not null' => FALSE,
+    ),
+  );
+}
+
+/**
+ * Implementation of hook_schema_alter().
+ */
+function netforum_authentication_schema_alter(&$schema) {
+  $schema['users']['fields'] = array_merge($schema['users']['fields'], netforum_auth_new_fields());
+}
+
 /**
 *  Implementation of hook_install
 */
@@ -10,36 +46,20 @@ function netforum_authentication_install() {
   $weight = (int)db_result(db_query("SELECT weight FROM {system} WHERE name = 'user'"));
   db_query("UPDATE {system} SET weight = %d WHERE name = 'netforum_authentication'", $weight + 1);
   
-  switch ($GLOBALS['db_type']) {
-    case 'pgsql':
-      $success = FALSE; 
-      break;
-
-    case 'mysql':
-    case 'mysqli':
-
-      db_query("ALTER TABLE {users} ADD (
-          cst_key varchar(36),
-          cst_type varchar(100),
-          cst_id varchar(10),
-          cst_web_password varchar(36)
-        );");
-      
-       $success = TRUE; 
-      break;
-  } // End case 
-
-  // Notify of changes
-  if ($success) {
-    drupal_set_message(t('Netforum Authentication module installed tables successfully.  Remember to visit the '. l(t('netforum settings'), 'admin/settings/netforum') .' before use.'));
+  $ret = array();
+  foreach(netforum_auth_new_fields() as $name => $field) {
+    db_add_field($ret, 'users', $name, $field);
   }
-  else {
-    drupal_set_message(t('The installation of Netforum Authentication module was unsuccessful.'), 'error');
-  }
+
 }
 
 function netforum_authentication_uninstall() {
-  db_query("ALTER TABLE {users} DROP cst_key, cst_type, cst_id, cst_web_password");
+  
+  $ret = array();
+  foreach(array_keys(netforum_auth_new_fields()) as $name) {
+    db_drop_field($ret, 'users', $name);
+  }  
+  
   variable_del('netforum_auth_user_register');
   variable_del('netforum_auth_forgotten_password');
   variable_del('netforum_auth_forgot_password_add');
