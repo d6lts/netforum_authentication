@@ -1,3 +1,7 @@
+Changes from 5x-0.9
+- Fixed SSO bugs including cookie based auth and eWeb sites to log into
+- Added helper function for eWeb sites to log into
+
 Changes from 5.x-0.8-8
 - Fixed bug w/ local password hashing
 - Now plays nicely with systems that have login by email set
