@@ -308,15 +308,29 @@ function netforum_auth_admin_settings() {
     /*
     NOTE:  This was added in response to http://drupal.org/node/454578 - although current testing suggests the old style
            of setting the login and pw to the modified md5 plaintext password still works with the current version of netforum
-    $form['sso']['netforum_auth_custom_password_encryption_key'] = array(
-      '#title' => t('Custom SSO Encryption Key'),
+    */
+    $form['sso']['pw_encryption'] = array(
+      '#title' => "Custom SSO Encryption Key",
+      '#type' => 'fieldset',
+      '#description' => t("For netFORUM 2.2 and above, these fields depend on the eWebUserPasswordCookieEncryptionKey setting in eweb/web.config.  Leave blank to use the pre-2.2 style of SSO."),
+    );
+    $form['sso']['pw_encryption']['netforum_auth_custom_password_encryption_key'] = array(
+      '#title' => t('AES Key'),
       '#type' => 'textfield',
-      '#description' => t('For netFORUM 2.2 and above, this field should correspond to the CustomPasswordEncryptionKey or eWebUserPasswordCookieEncryptionKey setting in eweb/web.config.  Leave blank to use the pre-2.2 style of SSO.'),
+      '#description' => t('The encryption key should be the Base 64 encoded.  It must be generated for you based on the value of the eWebUserPasswordCookieEncryptionKey.  '),
       '#size' => 40,
       '#required' => FALSE,
       '#default_value' => variable_get('netforum_auth_custom_password_encryption_key', ''),
-    );    
-    */
+    );
+    $form['sso']['pw_encryption']['netforum_auth_custom_password_encryption_iv'] = array(
+      '#title' => t('AES Initialization Vector (IV)'),
+      '#type' => 'textfield',
+      '#description' => t('The IV should also be Base 64 encoded and shorter than the key.'),
+      '#size' => 30,
+      '#required' => FALSE,
+      '#default_value' => variable_get('netforum_auth_custom_password_encryption_iv', ''),
+    );
+    
     
     $form['sso']['netforum_auth_shared_sso'] = array(
       '#title' => t('Allow other drupal sites to share this domain for SSO'),
@@ -373,6 +387,37 @@ function netforum_auth_admin_settings_validate($form_id, $form_values) {
         form_set_error('form', t("The shared SSO site either could not be reached or the shared secret didn't match."));
       }
     }
+  }
+  
+  if (trim($form_values['netforum_auth_custom_password_encryption_key']) != '' || trim($form_values['netforum_auth_custom_password_encryption_iv']) != '') {
+    $key = trim($form_values['netforum_auth_custom_password_encryption_key']);
+    $iv = trim($form_values['netforum_auth_custom_password_encryption_iv']);
+
+    # TODO:  The two else statements should check for appropriate key length, but mb_strlen is returning less than expected.  Instead we
+    # run one test encryption to see if it works.  If there are errors Drupal will catch and display them.
+    netforum_aes_encrypt("test", $key, $iv);
+
+
+    if ($key == '') {
+      form_set_error('netforum_auth_custom_password_encryption_key', t('SSO key cannot be blank if SSO IV is set'));
+    }    
+    // else {
+    //   $keylen = mb_strlen(base64_decode($key));
+    //   if ($keylen != 32) {
+    //     form_set_error('netforum_auth_custom_password_encryption_key', t('SSO key is the wrong size, 32 bytes expected but %size found after decoding.', array('%size' => $keylen)));
+    //   }
+    // }
+    
+    if ($iv == '') {
+      form_set_error('netforum_auth_custom_password_encryption_iv', t('SSO IV cannot be blank if SSO key is set'));
+    }
+    // else {
+    //   $keylen = mb_strlen(base64_decode($iv));
+    //   if ($keylen != 16) {
+    //     form_set_error('netforum_auth_custom_password_encryption_iv', t('SSO IV is the wrong size, 16 bytes expected but %size found after decoding.', array('%size' => $keylen)));
+    //   }
+    // }
+    
   }
   
   if (strtolower($form_values['netforum_auth_user_register']) != '<drupal>' || strtolower($form_values['netforum_auth_forgotten_password']) != '<drupal>' || strtolower($form_values['netforum_auth_user_editing']) != '<drupal>') {
@@ -585,6 +630,8 @@ function _netforum_auth_match_password_token($cst_web_password, $token) {
  * username
  */
 function netforum_authentication_auth($username, $password, $server) {  
+  global $_netforum_auth_password_plain;
+  $_netforum_auth_password_plain = $password;
   if ($server != '') {
     $username .= "@$server";
   }
@@ -1284,10 +1331,27 @@ function netforum_auth_eweb_sso_login($account = '') {
     return false;
   }
 
+  // Check for custom cookie encryption
+  global $_netforum_auth_password_plain;
+  $key = trim(variable_get('netforum_auth_custom_password_encryption_key', ''));
+  $iv = trim(variable_get('netforum_auth_custom_password_encryption_iv', ''));
+  if ($key != '' && $iv != '') {
+    $enc_pw = netforum_aes_encrypt($_netforum_auth_password_plain, $key, $iv);
+  }
+  else {
+    $enc_pw = false;
+  }
+  unset($_netforum_auth_password_plain);
+  
   foreach (netforum_auth_eweb_codes_for_sso() as $web_code) {
-    setcookie($web_code .'cstid', $account->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
-    setcookie($web_code .'login', $account->name, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
-    setcookie($web_code .'pw', $account->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    if ($enc_pw) {
+      setrawcookie($web_code .'login', $account->name, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setrawcookie($web_code .'pw', $enc_pw, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    }
+    else {
+      setcookie($web_code .'cstid', $account->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setcookie($web_code .'pw', $account->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    }
   }    
 }
 
@@ -1300,8 +1364,8 @@ function netforum_auth_eweb_sso_logout() {
   }
 
   foreach (netforum_auth_eweb_codes_for_sso() as $web_code) {
-    setcookie($web_code .'cstid', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     setcookie($web_code .'login', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    setcookie($web_code .'cstid', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     setcookie($web_code .'pw', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
   }
   if (strtolower(variable_get('netforum_auth_sso_logout_url', '<drupal>')) != '<drupal>') {
