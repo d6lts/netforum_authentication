@@ -12,19 +12,6 @@ $form['my_image_button'] = array(
   '#src'          => 'my/image/path.jpg',
 ); */
 
-/* TODO Remove db_num_rows() method
-   The db_num_rows() method was removed from the database abstraction layer in
-   6.x core, as it was a database dependent method. Developers need to use other
-   handling to replace the needs of this method. */
-
-/* TODO Change 'Submit' to 'Save' on buttons
-   It has been agreed on that the description 'Submit' for a button is not a
-   good choice since it does not indicate what actually happens. While for
-   example on node editing forms, 'Preview' and 'Delete' describe exactly what
-   will happen when the user clicks on the button, 'Submit' only gives a vague
-   idea. When labelling your buttons, make sure that it is clear what this
-   button does when the user clicks on it. */
-
 /* TODO hook_user('view')
    The return value of hook_user('view') has changed, to match the process that
    nodes use for rendering. Modules should add their custom HTML to
@@ -38,47 +25,12 @@ $form['my_image_button'] = array(
    wish to make use of the same tokens for their own needs are encouraged
    to use this function. */
 
-/* TODO
-   There is a new hook_watchdog in core. This means that contributed modules
-   can implement hook_watchdog to log Drupal events to custom destinations.
-   Two core modules are included, dblog.module (formerly known as watchdog.module),
-   and syslog.module. Other modules in contrib include an emaillog.module,
-   included in the logging_alerts module. See syslog or emaillog for an
-   example on how to implement hook_watchdog.
-function example_watchdog($log = array()) {
-  if ($log['severity'] == WATCHDOG_ALERT) {
-    mysms_send($log['user']->uid,
-      $log['type'],
-      $log['message'],
-      $log['variables'],
-      $log['severity'],
-      $log['referer'],
-      $log['ip'],
-      format_date($log['timestamp']));
-  }
-} */
-
-/* TODO Implement the hook_theme registry. Combine all theme registry entries
-   into one hook_theme function in each corresponding module file.
-function netforum_authentication_theme() {
-  return array(
-  );
-} */
 
 /* TODO $form['#base'] is gone
    In FormAPI, many forms with different form_ids can share the same validate,
    submit, and theme handlers. This can be done by manually populating the
    $form['#submit'], $form['#validate'], and $form['#theme'] elements with
    the proper function names. */
-
-/* TODO You may want to take advantage of new form-specific alter hooks.
-   The hook_form_alter() is complemented by hook_form_$form-id_alter().
-   Optionally, modules can implement form-specific alteration functions rather
-   than a single hook_form_alter() with many conditional switch statements.
-   This is optional, and is most useful for tidying the code of modules that
-   alter many forms to customize a site's operations.
-   The new function names are built using the following format:
-   [your-module-name]_form_[$form_id]_alter. */
 
 //TODO:  There are two places still calling GetQuery w/o regard to OD or Enterprise.  One for the forgot password section,
 // and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
@@ -210,7 +162,7 @@ function netforum_auth_user_editing_redirect() {
   global $user;
   if (netforum_is_empty_guid($user->cst_key) === false && strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
     $loc = variable_get('netforum_auth_user_editing', '');
-    if (variable_get('netforum_xweb_od', 0) == 1 && stristr($loc, "netforumondemand.com")) { 
+    if (netforum_is_team() && stristr($loc, "netforumondemand.com")) { 
       netforum_auth_od_sso_transfer($loc);
     }
     else {
@@ -368,7 +320,7 @@ function netforum_auth_admin_settings() {
     '#default_value' => variable_get('netforum_auth_user_editing', '<drupal>'),
   );
   
-  if (variable_get('netforum_xweb_od',0) == 1) {
+  if (netforum_is_team()) {
     $form['settings']['netforum_auth_user_text'] = array(
       '#title' => t('Edit User notes'),
       '#type' => 'textarea',
@@ -387,7 +339,7 @@ function netforum_auth_admin_settings() {
   );  
 
   //Enterprise only
-  if (variable_get('netforum_xweb_od', 1) == 0) {    
+  if (netforum_is_enterprise()) {    
     $form['sso'] = array(
       '#title' => "Single Sign On settings",
       '#type' => 'fieldset',
@@ -418,7 +370,34 @@ function netforum_auth_admin_settings() {
       '#size' => 40,
       '#default_value' => variable_get('netforum_auth_sso_logout_url', '<drupal>'),
     );
-  
+    
+    /*
+    NOTE:  This was added in response to http://drupal.org/node/454578 - although current testing suggests the old style
+           of setting the login and pw to the modified md5 plaintext password still works with the current version of netforum
+    */
+    $form['sso']['pw_encryption'] = array(
+      '#title' => "Custom SSO Encryption Key",
+      '#type' => 'fieldset',
+      '#description' => t("For netFORUM 2.2 and above, these fields depend on the eWebUserPasswordCookieEncryptionKey setting in eweb/web.config.  Leave blank to use the pre-2.2 style of SSO."),
+    );
+    $form['sso']['pw_encryption']['netforum_auth_custom_password_encryption_key'] = array(
+      '#title' => t('AES Key'),
+      '#type' => 'textfield',
+      '#description' => t('The encryption key should be the Base 64 encoded.  It must be generated for you based on the value of the eWebUserPasswordCookieEncryptionKey.  '),
+      '#size' => 40,
+      '#required' => FALSE,
+      '#default_value' => variable_get('netforum_auth_custom_password_encryption_key', ''),
+    );
+    $form['sso']['pw_encryption']['netforum_auth_custom_password_encryption_iv'] = array(
+      '#title' => t('AES Initialization Vector (IV)'),
+      '#type' => 'textfield',
+      '#description' => t('The IV should also be Base 64 encoded and shorter than the key.'),
+      '#size' => 30,
+      '#required' => FALSE,
+      '#default_value' => variable_get('netforum_auth_custom_password_encryption_iv', ''),
+    );
+    
+    
     $form['sso']['netforum_auth_shared_sso'] = array(
       '#title' => t('Allow other drupal sites to share this domain for SSO'),
       '#type' => 'checkbox',
@@ -474,6 +453,37 @@ function netforum_auth_admin_settings_validate($form, &$form_state) {
         form_set_error('form', t("The shared SSO site either could not be reached or the shared secret didn't match."));
       }
     }
+  }
+  //TODO FROM MERGE:
+  if (trim($form_state['values']['netforum_auth_custom_password_encryption_key']) != '' || trim($form_state['values']['netforum_auth_custom_password_encryption_iv']) != '') {
+    $key = trim($form_state['values']['netforum_auth_custom_password_encryption_key']);
+    $iv = trim($form_state['values']['netforum_auth_custom_password_encryption_iv']);
+
+    # TODO:  The two else statements should check for appropriate key length, but mb_strlen is returning less than expected.  Instead we
+    # run one test encryption to see if it works.  If there are errors Drupal will catch and display them.
+    netforum_aes_encrypt("test", $key, $iv);
+
+
+    if ($key == '') {
+      form_set_error('netforum_auth_custom_password_encryption_key', t('SSO key cannot be blank if SSO IV is set'));
+    }    
+    // else {
+    //   $keylen = mb_strlen(base64_decode($key));
+    //   if ($keylen != 32) {
+    //     form_set_error('netforum_auth_custom_password_encryption_key', t('SSO key is the wrong size, 32 bytes expected but %size found after decoding.', array('%size' => $keylen)));
+    //   }
+    // }
+    
+    if ($iv == '') {
+      form_set_error('netforum_auth_custom_password_encryption_iv', t('SSO IV cannot be blank if SSO key is set'));
+    }
+    // else {
+    //   $keylen = mb_strlen(base64_decode($iv));
+    //   if ($keylen != 16) {
+    //     form_set_error('netforum_auth_custom_password_encryption_iv', t('SSO IV is the wrong size, 16 bytes expected but %size found after decoding.', array('%size' => $keylen)));
+    //   }
+    // }
+    
   }
   
   if (strtolower($form_state['values']['netforum_auth_user_register']) != '<drupal>' || strtolower($form_state['values']['netforum_auth_forgotten_password']) != '<drupal>' || strtolower($form_state['values']['netforum_auth_user_editing']) != '<drupal>') {
@@ -599,13 +609,11 @@ function netforum_auth_shared_sso_login($cstid = '', $cstid_token = '', $pw_toke
     if ($cstid_internal_token == $cstid_token) {
       $account = new stdClass();
       $res = db_query("SELECT cst_key, cst_id, cst_web_password FROM {users} WHERE cst_id = '%s'", $cstid);
-      if (db_num_rows($res) >= 0) {
-        while ($account = db_fetch_object($res)) {
-          if (_netforum_auth_match_password_token($account->cst_web_password, $pw_token) ) {
-            $account->name = $account->cst_id;
-            $found_user = true;
-            break;
-          }
+      if ($account = db_fetch_object($res)) {
+        if (_netforum_auth_match_password_token($account->cst_web_password, $pw_token) ) {
+          $account->name = $account->cst_id;
+          $found_user = true;
+          break;
         }
       }
       else {
@@ -685,14 +693,15 @@ function _netforum_auth_match_password_token($cst_web_password, $token) {
  * authenticates against netFORUM.  Local users should have no @ sign in their
  * username
  */
-function netforum_authentication_auth($username, $password, $server) {
-
+function netforum_authentication_auth($username, $password, $server) {  
+  global $_netforum_auth_password_plain;
+  $_netforum_auth_password_plain = $password;
   if ($server != '') {
     $username .= "@$server";
   }
   
   //If we are using OD skip the rest of our function and let the OD function handle it.
-  if (variable_get('netforum_xweb_od', 0) == 1) {
+  if (netforum_is_team()) {
     return _netforum_authentication_auth_od($username, $password);
   }
   
@@ -767,7 +776,7 @@ function _netforum_authentication_auth_od($username, $password) {
  */
 function _netforum_authentication_auth_local($username, $password) {
   $result = db_query("SELECT uid FROM {users} WHERE name='%s' AND cst_web_password = '%s'", $username, netforum_auth_hash_pw($password));
-  if (db_num_rows($result) > 0) {
+  if ($obj = db_fetch_object($result)) {
     return true;
   }
   else {
@@ -861,7 +870,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
           
           //Now that we know what fields we want, go get them
           $cst_obj = false;
-          if (variable_get('netforum_xweb_od', 1) == 0) { //Enterprise only gets the query
+          if (netforum_is_enterprise()) { //Enterprise only gets the query
             //check to see if  any of the customer fields are different from the information in the DB
             $query = Array('szObjectName' => 'Customer',
                   'szColumnList' => implode(", ", $cst_fields),
@@ -879,7 +888,6 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       	      $cst_obj = $_netforum_auth_eweb_od_user;
     	      }
     	      else {
-    	        //b86fc0da-7a04-4f5b-8a9e-564a53253924
               $query = Array('szObjectName' => 'Customer',
                     'sz' => implode(", ", $cst_fields),
                     'szWhereClause' => "cst_key = '". $account->cst_key ."'",
@@ -935,7 +943,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
         }
       }
       //Shared SSO is Enterprise only
-      if (variable_get('netforum_xweb_od', 1) == 0 && netforum_is_empty_guid($account->cst_key) === false) {
+      if (netforum_is_enterprise() && netforum_is_empty_guid($account->cst_key) === false) {
         
         netforum_auth_eweb_sso_login();
         
@@ -968,16 +976,18 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       $needed_columns = array_unique(array('cst_type', 'cst_web_password', 'cst_id') + netforum_auth_user_fields());
       
       
-      //For Enterprise netforum
-      if (netforum_is_empty_guid($_netforum_auth_token) === false) { 
-        $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_netforum_auth_token));
-        if (is_null($result) || isset($result->WebValidateResult) === false ) {
-          drupal_set_message(t('Could not fetch netFORUM information for new user'), 'error');
-          break;
-        }
-        else {
-          $_netforum_auth_cst_key =  (string)$result->WebValidateResult;
-          $_netforum_auth_token = null; //unset this so we don't keep calling xweb
+      //For Enterprise netforum if we have the customer key or can get it
+      if (netforum_is_empty_guid($_netforum_auth_token) === false || netforum_is_empty_guid($_netforum_auth_cst_key) === false) {
+        if (netforum_is_empty_guid($_netforum_auth_token) === false) { 
+          $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_netforum_auth_token));
+          if (is_null($result) || isset($result->WebValidateResult) === false ) {
+            drupal_set_message(t('Could not fetch netFORUM information for new user'), 'error');
+            break;
+          }
+          else {
+            $_netforum_auth_cst_key =  (string)$result->WebValidateResult;
+            $_netforum_auth_token = null; //unset this so we don't keep calling xweb
+          }
         }
         
         if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) { 
@@ -1027,7 +1037,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       
     case 'update':
       if ( netforum_is_empty_guid($account->cst_key) === false) { 
-        if (variable_get('netforum_xweb_od', 1) == 0) { //We only push data back to Enterprise netforum
+        if (netforum_is_enterprise()) { //We only push data back to Enterprise netforum
           $eml_field = _netforum_auth_get_email_field('Customer');
           //this array keeps key => value pairs to correspond to the netFORUM information to be updated.
           $nf_variables = array();
@@ -1035,7 +1045,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             if (isset($edit['mail']) && $edit['mail'] != '' && $edit['mail'] != $account->mail) {
               $nf_variables[$eml_field] = $edit['mail'];
             }
-            if (isset($edit['pass']) && $edit['pass'] != '') {
+            if (isset($edit['pass']) && empty($edit['pass']) === false) {
               $nf_variables['cst_web_password'] = $edit['pass'];
               $nf_variables['cst_web_force_password_change'] = 0;
               //Save cst_web_password because we use it if the user is logging in and xWeb is not available.  
@@ -1122,7 +1132,7 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
  */
 function netforum_auth_categories() {  
   $categories = array();
-  if (variable_get('netforum_xweb_od', 1) == 0){ //in enterprise this works
+  if (netforum_is_enterprise()){ //in enterprise this works
     // If no modules implement the netforum_auth_categories hook, set it to be based on membership
     if ( count(module_implements('netforum_auth_categories')) == 0 ) {
 	    $query_params = array(
@@ -1181,7 +1191,7 @@ function netforum_auth_user_categories($account) {
     return $user_categories;
   }
   
-    if (variable_get('netforum_xweb_od', 1) == 0){ //in enterprise this works
+    if (netforum_is_enterprise()){ //in enterprise this works
       // If no modules implement the hook, set it to be based on membership
       if ( count(module_implements('netforum_auth_user_categories')) == 0 ) {
         $query_params = array(
@@ -1196,7 +1206,7 @@ function netforum_auth_user_categories($account) {
           netforum_auth_fresh_user_categories(true); //Important step!  Note that we have checked
           if ($response->attributes()->recordReturn > 0 ) {
             foreach ($response->MembershipProxyObject as $mpr) {
-              $user_categories[] = (string)$mpr->mbt_key;
+              $user_categories[] = (string)$mpr->mbr_mbt_key;
             }
           }
         }
@@ -1332,13 +1342,41 @@ function netforum_auth_eweb_sites($sitecode_only = false) {
 }
 
 /**
+ * Fetches a list of eWeb site codes for SSO with this drupal installation
+ *
+ * @return
+ *    An array of eWeb site codes
+ */
+function netforum_auth_eweb_codes_for_sso() {
+  
+  static $login_web_codes = array();
+  if ( count($login_web_codes) > 0) {
+    return $login_web_codes;
+  }
+  
+  $selected_sites = variable_get('netforum_auth_eweb_sso', array());
+  $do_it_all = false;
+  if ( isset($selected_sites['ALL']) && ((string)$selected_sites['ALL'] == "ALL")) {
+    $do_it_all = true;
+  }
+  //we pass true to the eweb_sites function to get only the web code and not the entire description
+  foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
+    if ((string)$selected_sites[$web_key] == $web_key || $do_it_all === true) {
+      $login_web_codes[] = (string)$web_code;
+    }
+  }
+  
+  return $login_web_codes;
+}
+
+/**
  * Set the needed cookies to log the user into the specified eWeb sites
  *
  * @param $account
  *  The user object of the user to log in, defaults to the global $user object
  */
 function netforum_auth_eweb_sso_login($account = '') {
-  if (variable_get('netforum_xweb_od', 1) == 0) {
+  if (netforum_is_team()) {
     watchdog('netforum', 'Cannot perform eWeb SSO login for non-enterprise versions of netforum', WATCHDOG_WARNING);
     return;
   }
@@ -1359,33 +1397,42 @@ function netforum_auth_eweb_sso_login($account = '') {
     return false;
   }
 
-  $login_web_codes = array();
-  $selected_sites = variable_get('netforum_auth_eweb_sso', array());
-  $do_it_all = false;
-  if ( isset($selected_sites['ALL']) && ($selected_sites['ALL'] == 'ALL' || $selected_sites['ALL'] == 1)) {
-    $do_it_all = true;
-  }
-  //we pass true to the eweb_sites function to get only the web code and not the entire description
-  foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
-    if ($selected_sites[$web_key] == $web_key || $do_it_all === true || $selected_sites[$web_key] == 1) {
-      $login_web_codes[] = $web_code;
+  // Check for custom cookie encryption
+  global $_netforum_auth_password_plain;
+  if ($_netforum_auth_password_plain) {
+    $key = trim(variable_get('netforum_auth_custom_password_encryption_key', ''));
+    $iv = trim(variable_get('netforum_auth_custom_password_encryption_iv', ''));
+    if ($key != '' && $iv != '') {
+      $enc_pw = netforum_aes_encrypt($_netforum_auth_password_plain, $key, $iv);
     }
+    else {
+      $enc_pw = false;
+    }
+    unset($_netforum_auth_password_plain);
   }
-
-  foreach ($login_web_codes as $web_code) {
-    setcookie($web_code .'cstid', $account->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
-    setcookie($web_code .'pw', $account->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
-  }
+  
+  foreach (netforum_auth_eweb_codes_for_sso() as $web_code) {
+    if ($enc_pw) {
+      setrawcookie($web_code .'login', $account->name, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setrawcookie($web_code .'pw', $enc_pw, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    }
+    else {
+      setcookie($web_code .'cstid', $account->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setcookie($web_code .'pw', $account->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+    }
+  }    
 }
 
 /**
  * Delete the cookies set for SSO login and optionally direct the user to the eWeb logout page
  */
 function netforum_auth_eweb_sso_logout() {
-  if (variable_get('netforum_xweb_od', 1) == 0 ) {
+  if (netforum_is_team()) { //Only unset cookies if we're using Enterprise
     return;
   }
-  foreach (netforum_auth_eweb_sites(true) as $web_key => $web_code) {
+
+  foreach (netforum_auth_eweb_codes_for_sso() as $web_code) {
+    setcookie($web_code .'login', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     setcookie($web_code .'cstid', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     setcookie($web_code .'pw', false, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
   }
@@ -1407,7 +1454,7 @@ function netforum_auth_od_sso_transfer($loc = "") {
     $external = $loc;
   }
 
-  if (variable_get('netforum_xweb_od', 0) == 1 && netforum_is_valid_guid($user->cst_key)) { 
+  if (netforum_is_team() && netforum_is_valid_guid($user->cst_key)) { 
     $wsdl_url = variable_get('netforum_wsdl_url', "");
     $wsdl_url = str_ireplace("netForumXMLOnDemand.asmx", "Signon.asmx", $wsdl_url);
     
@@ -1497,7 +1544,7 @@ function netforum_auth_user_fields() {
   
   $object_fields = netforum_object_fields('Customer');
   
-  if (variable_get('netforum_xweb_od', 0) == 1) { 
+  if (netforum_is_team()) { 
     //Store these if we're using OD since we'll be using them for the groups
     $field_names[] = 'cst_member_flag';
     $field_names[] = 'cst_life_member_flag';
@@ -1572,7 +1619,7 @@ function _netforum_auth_get_email_field($obj_name) {
 function netforum_authentication_form_alter(&$form, &$form_state, $form_id) {
   global $user;
   if ($form_id == 'user_edit' 
-      && variable_get('netforum_xweb_od', 0) == 1 
+      && netforum_is_team() 
       && netforum_is_valid_guid($user->cst_key)) { 
     
     //Remove the name, email, and password fields    
@@ -1599,44 +1646,84 @@ function netforum_authentication_form_alter(&$form, &$form_state, $form_id) {
       unset($form['account']);
     }
   }
+  else if ($form_id == 'user_login' || $form_id == 'user_login_block') {
+    // If the user login form is being submitted, add our validation handler. 
+    if(isset($form_state['post']['name'])){ 
+      //Findthelocalvalidationfunction's entry so we can replace it. 
+      $array_key = array_search('user_login_authenticate_validate', $form['#validate']); 
+      if ($array_key === FALSE) { 
+        //Couldnotfindit.Someothermodule must have run form_alter(). 
+        //Wewillsimplyaddourvalidation just before the final validator. 
+        $final_validator = array_pop($form['#validate']); 
+        $form['#validate'][] = 'netforum_auth_user_login_validate'; 
+        $form['#validate'][] = $final_validator; 
+      } 
+      else{ 
+        //Foundthelocalvalidationfunction. Replace with ours. 
+        $form['#validate'][$array_key] = 'netforum_auth_user_login_validate'; 
+      }
+    } 
+  }
 }
+
+function netforum_auth_user_login_validate($form, &$form_state) { 
+  global $user; 
+  if (!empty($user->uid)) { 
+    // Another module has already handled authentication. 
+    return; 
+  } 
+
+  //Call our custom authentication function, a holdover from Drupal 5 that makes for easy porting
+  if (netforum_authentication_auth($form_state['values']['name'], $form_state['values']['pass'], '')) { 
+    //Log user in, or register new user if not already present. 
+    user_external_login_register($form_state['values']['name'], 'netforum_authentication'); 
+    //Write session, update timestamp, run user'login'hook. 
+    user_authenticate_finalize($form_state['values']);
+  }
+  else {
+    form_set_error('name', t('Unrecognized username and password')); 
+    form_set_error('pass');
+  } 
+} 
+
 
 /**
  * Implementation of hook_filter()
  *
  * used for netforum OD to rewrite links to the OD eWeb page for SSO
  */
-function netforum_authentication_filter($op, $delta = 0, $format = -1, $text = '') {
-  
-  $od_domain = "netforumondemand.com";
+function netforum_authentication_filter($op, $delta = 0, $format = -1, $text = '') {  
+  if (netforum_is_team()) {
+    $od_domain = "netforumondemand.com";
 
-  switch ($op) {
-    case 'list':
-      return array(0 => t('netFORUM OnDemand SSO Filter'));
+    switch ($op) {
+      case 'list':
+        return array(0 => t('netFORUM OnDemand SSO Filter'));
 
-    case 'description':
-      return t('Intercept links to the netFORUM OnDemand eWeb pages to ensure that a user is logged in first, in effect creating SSO.  Any link to !od_domain will be rewritten.', array('!od_domain' => $od_domain));
+      case 'description':
+        return t('Intercept links to the netFORUM OnDemand eWeb pages to ensure that a user is logged in first, in effect creating SSO.  Any link to !od_domain will be rewritten.', array('!od_domain' => $od_domain));
 
-    case 'prepare':
-      return $text;
+      case 'prepare':
+        return $text;
 
-    case "process":
-      $searches = array();
-      $replacements = array();
-      $regexp = "/<a\s[^>]*href=([\"\']??)([^\" >]*?)\\1[^>]*>(.*)<\/a>/siU"; 
-      if(preg_match_all($regexp, $text, $matches, PREG_SET_ORDER)) { 
-        foreach ($matches as $match) {
-          if (stristr($match[2], $od_domain)) {
-            $searches[] = $match[2];
-            $replacements[] = url('nf_od_sso_transfer/', array('query' => "loc=" . urlencode($match[2])));
+      case "process":
+        $searches = array();
+        $replacements = array();
+        $regexp = "/<a\s[^>]*href=([\"\']??)([^\" >]*?)\\1[^>]*>(.*)<\/a>/siU"; 
+        if(preg_match_all($regexp, $text, $matches, PREG_SET_ORDER)) { 
+          foreach ($matches as $match) {
+            if (stristr($match[2], $od_domain)) {
+              $searches[] = $match[2];
+              $replacements[] = url('nf_od_sso_transfer/', array('query' => "loc=" . urlencode($match[2])));
+            }
           }
+          $text = str_replace($searches, $replacements, $text);
         }
-        $text = str_replace($searches, $replacements, $text);
-      }
-      return $text;
+        return $text;
 
-    default:
-      return $text;
+      default:
+        return $text;
+    }
   }
 }
 
