@@ -1,6 +1,8 @@
 <?php
 // $Id$
 
+//TODO:  Clear the menu cache after the admin form is saved
+
 /* TODO FormAPI image buttons are now supported.
    FormAPI now offers the 'image_button' element type, allowing developers to
    use icons or other custom images in place of traditional HTML submit buttons.
@@ -25,13 +27,6 @@ $form['my_image_button'] = array(
    wish to make use of the same tokens for their own needs are encouraged
    to use this function. */
 
-
-/* TODO $form['#base'] is gone
-   In FormAPI, many forms with different form_ids can share the same validate,
-   submit, and theme handlers. This can be done by manually populating the
-   $form['#submit'], $form['#validate'], and $form['#theme'] elements with
-   the proper function names. */
-
 //TODO:  There are two places still calling GetQuery w/o regard to OD or Enterprise.  One for the forgot password section,
 // and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
 // to use a separate function to get user data.  Maybe not load data on login?
@@ -49,108 +44,94 @@ if ($_SESSION['netforum_auth_link']) {
  */
 function netforum_authentication_menu() {
   $items = array();
-  global $user;
+  //TODO:  Fix this menu awkwardness
+  $items['admin/user/netforum-authentication'] = array(
+    'title' => 'netFORUM user authentication',
+    'description' => 'Set the authentication settings for netFORUM customers',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('netforum_auth_admin_settings'),
+    'access arguments' => array('administer site configuration'),
+  );
   
-/* TODO
-   Non menu code that was placed in hook_menu under the '!$may_cache' block
-   so that it could be run during initialization, should now be moved to hook_init.
-   Previously we called hook_init twice, once early in the bootstrap process, second
-   just after the bootstrap has finished. The first instance is now called boot
-   instead of init.
-   
-   In Drupal 6, there are now two hooks that can be used by modules to execute code
-   at the beginning of a page request. hook_boot() replaces hook_boot() in Drupal 5
-   and runs on each page request, even for cached pages. hook_boot() now only runs
-   for non-cached pages and thus can be used for code that was previously placed in
-   hook_menu() with $may_cache = FALSE:
-   
-   Dynamic menu items under a '!$may_cache' block can often be simplified
-   to remove references to arg(n) and use of '%<function-name>' to check
-   conditions. See http://drupal.org/node/103114.
-   
-   The title and description arguments should not have strings wrapped in t(),
-   because translation of these happen in a later stage in the menu system.
-*/
-  if ($may_cache) {
-    $items['admin/user/netforum-authentication'] = array(
-      'title' => 'netFORUM user authentication',
-      'description' => 'Set the authentication settings for netFORUM customers',
-      'page callback' => 'drupal_get_form',
-      'page arguments' => array('netforum_auth_admin_settings'),
-      'access arguments' => array('administer site configuration'),
-    );
-    
-    $items['admin/user/netforum-roles'] = array(
-      'title' => 'netFORUM user roles',
-      'description' => 'Choose what site roles are given to netFORUM users',
-      'page callback' => 'drupal_get_form',
-      'page arguments' => array('netforum_auth_role_settings'),
-      'access arguments' => array('administer site configuration') || user_access('administer permissions'),
-    );
-    
-    $items['admin/settings/netforum/clearcache'] = array(
-      'title' => 'Clear menu cache',
-      'page callback' => 'netforum_auth_cache_clear',
-      'access arguments' => array('administer site configuration'),
-      'type' => MENU_CALLBACK,
-    );
-    
-    $items['user/netforum_sso_check'] = array(
-      'title' => 'netFORM Authentication Shared SSO Check',
-      'page callback' => 'netforum_auth_shared_sso_check',
-      'access arguments' => true,
-      'type' => MENU_CALLBACK,
-    );
-    
-    $items['user/netforum_sso_share'] = array(
-      'title' => 'netFORM Authentication Shared SSO',
-      'page callback' => 'netforum_auth_shared_sso_login',
-      'access arguments' => true,
-      'type' => MENU_CALLBACK,
-    );
-    
-    $items['nf_od_sso_transfer'] = array(
-      'title' => 'Transfer to netFORUM OD w/ SSO',
-      'page callback' => 'netforum_auth_od_sso_transfer',
-      'access arguments' => true,
-      'type' => MENU_CALLBACK,
-    );
-    
-    
-    //here we will overwrite some special user URLs if we want to alter the behavior, if this isn't working check the load
-    // order of the modules to make sure netFORUM loads AFTER the user module.  Load order is determined by weight in the 
-    //system table and it should be set automatically on installation
-    if (strtolower(variable_get('netforum_auth_forgotten_password', '<drupal>')) != '<drupal>' || variable_get('netforum_auth_forgot_password_add', 0) == 1) {
-      $items['user/password'] = array(
-        'title' => 'Request new password',
-        'page callback' => 'netforum_auth_forgotten_password_redirect', 
-        'page arguments' => array('user_pass'), 
-        'access arguments' => !$user->uid, 'type' => MENU_LOCAL_TASK);
-    }
-    
-    if (strtolower(variable_get('netforum_auth_user_register', '<drupal>')) != '<drupal>') {
-     $items['user/register'] = array(
-      'title' => 'Create new account',
-      'page callback' => 'netforum_auth_user_register_redirect', 
-      'page arguments' => '', 
-      'access arguments' => !$user->uid && variable_get('user_register', 1), 
+  $items['admin/user/netforum-roles'] = array(
+    'title' => 'netFORUM user roles',
+    'description' => 'Choose what site roles are given to netFORUM users',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('netforum_auth_role_settings'),
+    'access callback' => 'netforum_auth_user_roles_access',
+  );
+  
+  $items['admin/settings/netforum/clearcache'] = array(
+    'title' => 'Clear menu cache',
+    'page callback' => 'netforum_auth_cache_clear',
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_CALLBACK,
+  );
+  
+  $items['user/netforum_sso_check'] = array(
+    'title' => 'netFORM Authentication Shared SSO Check',
+    'page callback' => 'netforum_auth_shared_sso_check',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  
+  $items['user/netforum_sso_share'] = array(
+    'title' => 'netFORM Authentication Shared SSO',
+    'page callback' => 'netforum_auth_shared_sso_login',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  
+  $items['nf_od_sso_transfer'] = array(
+    'title' => 'Transfer to netFORUM OD w/ SSO',
+    'page callback' => 'netforum_auth_od_sso_transfer',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  
+  
+  //here we will overwrite some special user URLs if we want to alter the behavior, if this isn't working check the load
+  // order of the modules to make sure netFORUM loads AFTER the user module.  Load order is determined by weight in the 
+  //system table and it should be set automatically on installation
+  if (strtolower(variable_get('netforum_auth_forgotten_password', '<drupal>')) != '<drupal>' || variable_get('netforum_auth_forgot_password_add', 0) == 1) {
+    $items['user/password'] = array(
+      'title' => 'Request new password',
+      'page callback' => 'netforum_auth_forgotten_password_redirect', 
+      'page arguments' => array('user_pass'), 
+      'access callback' => 'user_is_anonymous',
       'type' => MENU_LOCAL_TASK);
-    }
-    
   }
-  else{
-    if ( (arg(0) == 'user' && is_numeric(arg(1)) && arg(1) > 0)  && $user !== FALSE) {
-      if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
-       $items['user/'. '%' .'/edit'] = array(
-          'title' => 'Edit',
-          'page callback' => 'netforum_auth_user_editing_redirect', 
-          'page arguments' => '',
-          'access arguments' => array('administer users') || $user->uid == arg(1), 
-          'type' => MENU_LOCAL_TASK);
-      }
-    }
+  
+  if (strtolower(variable_get('netforum_auth_user_register', '<drupal>')) != '<drupal>') {
+   $items['user/register'] = array(
+    'title' => 'Create new account',
+    'page callback' => 'netforum_auth_user_register_redirect', 
+    'page arguments' => '', 
+    'access callback' => 'user_register_access', 
+    'type' => MENU_LOCAL_TASK);
   }
+  
+
+  if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
+    $items['user/%/edit'] = array(
+      'title' => 'Edit',
+      'page callback' => 'netforum_auth_user_editing_redirect',
+      'page arguments' => '',
+      'access callback' => 'netforum_auth_user_editing_redirect_access',
+      'access arguments' => array(1),
+      'type' => MENU_LOCAL_TASK,
+    );
+  }
+
 return $items;
+}
+
+function netforum_auth_user_editing_redirect_access($uid) {
+    return (($GLOBALS['user']->uid == $uid) || user_access('administer users')) && $uid > 0;
+}
+
+function netforum_auth_user_roles_access() {
+    return user_access('administer site configuration') || user_access('administer permissions');
 }
 
 /**
@@ -454,7 +435,7 @@ function netforum_auth_admin_settings_validate($form, &$form_state) {
       }
     }
   }
-  //TODO FROM MERGE:
+  
   if (trim($form_state['values']['netforum_auth_custom_password_encryption_key']) != '' || trim($form_state['values']['netforum_auth_custom_password_encryption_iv']) != '') {
     $key = trim($form_state['values']['netforum_auth_custom_password_encryption_key']);
     $iv = trim($form_state['values']['netforum_auth_custom_password_encryption_iv']);
@@ -504,12 +485,11 @@ function netforum_auth_role_settings() {
     '#description' => t('For each of the following roles on the drupal website, identify which individual or organizations should receive those roles'),
   );
   
-  $form['#submit'] = array('netforum_auth_role_settings_submit' => array());
-  
   $categories = netforum_auth_categories();
-  $netforum_auth_roles = variable_get('netforum_auth_roles', array_keys(user_roles(1)));
+  $netforum_auth_roles = variable_get('netforum_auth_roles', array());
   // This iterates only on the roles we are NOT ignoring, by default this is authenticated and anonymous
   foreach (array_diff_key(user_roles(), $ignore_roles) as $rid => $role) {
+    $defaults = $netforum_auth_roles[$rid];
     $form[$rid] = array(
       '#title' => $role,
       '#type' => 'fieldset',
@@ -521,18 +501,16 @@ function netforum_auth_role_settings() {
       '#title' => 'netFORUM Types',
       '#type' => 'checkboxes',
       '#options' => $categories,
-      '#default_value' => $netforum_auth_roles[$rid],
+      '#default_value' => is_array($defaults) ? $defaults : array(), //if there are no defaults leave it empty
     );
   }
   
   $form['buttons']['submit'] = array('#type' => 'submit', '#value' => t('Save configuration') );
   $form['buttons']['reset'] = array('#type' => 'submit', '#value' => t('Reset to defaults') );
 
-  if (!empty($_POST) && form_get_errors()) {
-    drupal_set_message(t('The settings have not been saved because of the errors.'), 'error');
-  }
-  $form['#base'] = 'system_settings_form';
-  
+
+  $form['#submit'][] = 'netforum_auth_role_settings_submit';
+
   return $form;
 }
 
