@@ -31,11 +31,17 @@ $form['my_image_button'] = array(
 // and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
 // to use a separate function to get user data.  Maybe not load data on login?
 
-// This is used for the shared SSO, since the user redirects after login we have to pause a beat before
-// including the magic link in the page
-if ($_SESSION['netforum_auth_link']) {
-  drupal_add_link($_SESSION['netforum_auth_link']);
-  unset($_SESSION['netforum_auth_link']);
+/**
+ * implementation of hook_init
+ *
+ * This is used for the shared SSO, since the user redirects after login we have to 
+ * pause a beat before including the magic link in the page
+ */
+function netforum_authentication_init() {
+  if ($_SESSION['netforum_auth_link']) {
+    drupal_add_link($_SESSION['netforum_auth_link']);
+    unset($_SESSION['netforum_auth_link']);
+  }
 }
 
 
@@ -116,7 +122,7 @@ function netforum_authentication_menu() {
     $items['user/%/edit'] = array(
       'title' => 'Edit',
       'page callback' => 'netforum_auth_user_editing_redirect',
-      'page arguments' => '',
+      'page arguments' => array(1),
       'access callback' => 'netforum_auth_user_editing_redirect_access',
       'access arguments' => array(1),
       'type' => MENU_LOCAL_TASK,
@@ -126,10 +132,20 @@ function netforum_authentication_menu() {
 return $items;
 }
 
+/**
+ * Determine if the given user ID is the current user, or if the user has the administer users right.
+ *
+ * used before redirecting or displaying the user editing form.
+ *
+ * @param $uid
+ */
 function netforum_auth_user_editing_redirect_access($uid) {
     return (($GLOBALS['user']->uid == $uid) || user_access('administer users')) && $uid > 0;
 }
 
+/**
+ * Determine if the logged in user can edit the roles
+ */
 function netforum_auth_user_roles_access() {
     return user_access('administer site configuration') || user_access('administer permissions');
 }
@@ -139,7 +155,7 @@ function netforum_auth_user_roles_access() {
  *
  * called by the user/ID/edit url if drupal is set to use an external site for editing user info
  */
-function netforum_auth_user_editing_redirect() {
+function netforum_auth_user_editing_redirect($uid) {
   global $user;
   if (netforum_is_empty_guid($user->cst_key) === false && strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
     $loc = variable_get('netforum_auth_user_editing', '');
@@ -151,7 +167,9 @@ function netforum_auth_user_editing_redirect() {
     }
   }
   else { 
-    return drupal_get_form('user_edit');
+    $form_state = array();
+    $edit = user_load($uid); //TODO:  this user edit load isn't pulling the right form and instead throws errors
+    return drupal_get_form('user_edit_form', $form_state, $uid, $edit, FALSE);
   }
 }
 
@@ -514,6 +532,11 @@ function netforum_auth_role_settings() {
   return $form;
 }
 
+/**
+ * Receives and saves data from the netforum_auth_role_settings form
+ *
+ * @ingroup forms
+ */
 function netforum_auth_role_settings_submit($form, &$form_state) {
   $netforum_auth_roles = array();
   
@@ -1627,23 +1650,27 @@ function netforum_authentication_form_alter(&$form, &$form_state, $form_id) {
   else if ($form_id == 'user_login' || $form_id == 'user_login_block') {
     // If the user login form is being submitted, add our validation handler. 
     if(isset($form_state['post']['name'])){ 
-      //Findthelocalvalidationfunction's entry so we can replace it. 
+      //Find the local validation function's entry so we can replace it, or just add if not found.
       $array_key = array_search('user_login_authenticate_validate', $form['#validate']); 
       if ($array_key === FALSE) { 
-        //Couldnotfindit.Someothermodule must have run form_alter(). 
-        //Wewillsimplyaddourvalidation just before the final validator. 
         $final_validator = array_pop($form['#validate']); 
         $form['#validate'][] = 'netforum_auth_user_login_validate'; 
         $form['#validate'][] = $final_validator; 
       } 
       else{ 
-        //Foundthelocalvalidationfunction. Replace with ours. 
         $form['#validate'][$array_key] = 'netforum_auth_user_login_validate'; 
       }
     } 
   }
 }
 
+/**
+ * Form validation for the user login form that authenticates against netforum
+ *
+ * Added in via the hook_form_alter function this will authenticate the user
+ * against netFORUM and either kick off the user creation/login process or
+ * return a form error.
+ */
 function netforum_auth_user_login_validate($form, &$form_state) { 
   global $user; 
   if (!empty($user->uid)) { 
@@ -1659,8 +1686,8 @@ function netforum_auth_user_login_validate($form, &$form_state) {
     user_authenticate_finalize($form_state['values']);
   }
   else {
-    form_set_error('name', t('Unrecognized username and password')); 
-    form_set_error('pass');
+    //Fall back to the local validation
+    user_login_authenticate_validate($form, $form_state);
   } 
 } 
 
