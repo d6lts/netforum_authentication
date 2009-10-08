@@ -370,6 +370,15 @@ function netforum_auth_admin_settings() {
       '#default_value' => variable_get('netforum_auth_sso_logout_url', '<drupal>'),
     );
     
+    $session_lifetime = ini_get('session.cookie_lifetime');    
+    $form['sso']['netforum_auth_cookie_lifetime'] = array(
+      '#title' => t('SSO cookie lifetime'),
+      '#type' => 'textfield',
+      '#description' => t('The SSO cookie lifetime determines how long a user is logged into the eWeb site, in seconds.  Currently a user will remain logged into Drupal for %time seconds (until !expiration).  Set this to 0 to log a user out when they close the browser.', array('%time' => $session_lifetime, '!expiration' => format_date(time() + $session_lifetime)) ),
+      '#size' => 40,
+      '#default_value' => variable_get('netforum_auth_cookie_lifetime', $session_lifetime),
+    );
+    
     /*
     NOTE:  This was added in response to http://drupal.org/node/454578 - although current testing suggests the old style
            of setting the login and pw to the modified md5 plaintext password still works with the current version of netforum
@@ -1412,14 +1421,15 @@ function netforum_auth_eweb_sso_login($account = '') {
     unset($_netforum_auth_password_plain);
   }
   
+  $sso_cookie_expiration = time() + variable_get('netforum_auth_cookie_lifetime', ini_get('session.cookie_lifetime'));  
   foreach (netforum_auth_eweb_codes_for_sso() as $web_code) {
     if ($enc_pw) {
-      setrawcookie($web_code .'login', $account->name, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
-      setrawcookie($web_code .'pw', $enc_pw, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setrawcookie($web_code .'login', $account->name, $sso_cookie_expiration, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setrawcookie($web_code .'pw', $enc_pw, $sso_cookie_expiration, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     }
     else {
-      setcookie($web_code .'cstid', $account->cst_id, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
-      setcookie($web_code .'pw', $account->cst_web_password, 0, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setcookie($web_code .'cstid', $account->cst_id, $sso_cookie_expiration, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
+      setcookie($web_code .'pw', $account->cst_web_password, $sso_cookie_expiration, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
     }
   }    
 }
