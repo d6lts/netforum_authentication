@@ -1,32 +1,6 @@
 <?php
 // $Id$
 
-//TODO:  Clear the menu cache after the admin form is saved
-
-/* TODO FormAPI image buttons are now supported.
-   FormAPI now offers the 'image_button' element type, allowing developers to
-   use icons or other custom images in place of traditional HTML submit buttons.
-
-$form['my_image_button'] = array(
-  '#type'         => 'image_button',
-  '#title'        => t('My button'),
-  '#return_value' => 'my_data',
-  '#src'          => 'my/image/path.jpg',
-); */
-
-/* TODO hook_user('view')
-   The return value of hook_user('view') has changed, to match the process that
-   nodes use for rendering. Modules should add their custom HTML to
-   $account->content element. Further, this HTML should be in the form that
-   drupal_render() recognizes. */
-
-/* TODO New user_mail_tokens() method may be useful.
-   user.module now provides a user_mail_tokens() function to return an array
-   of the tokens available for the email notification messages it sends when
-   accounts are created, activated, blocked, etc. Contributed modules that
-   wish to make use of the same tokens for their own needs are encouraged
-   to use this function. */
-
 //TODO:  There are two places still calling GetQuery w/o regard to OD or Enterprise.  One for the forgot password section,
 // and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
 // to use a separate function to get user data.  Maybe not load data on login?
@@ -50,7 +24,7 @@ function netforum_authentication_init() {
  */
 function netforum_authentication_menu() {
   $items = array();
-  //TODO:  Fix this menu awkwardness
+
   $items['admin/user/netforum-authentication'] = array(
     'title' => 'netFORUM user authentication',
     'description' => 'Set the authentication settings for netFORUM customers',
@@ -167,9 +141,9 @@ function netforum_auth_user_editing_redirect($uid) {
     }
   }
   else { 
-    $form_state = array();
-    $edit = user_load($uid); //TODO:  this user edit load isn't pulling the right form and instead throws errors
-    return drupal_get_form('user_edit_form', $form_state, $uid, $edit, FALSE);
+    include_once drupal_get_path('module', 'user') . '/user.pages.inc';
+    $edit = user_load($uid);
+    return user_edit($edit);
   }
 }
 
@@ -213,6 +187,7 @@ function netforum_auth_user_register_redirect() {
  * @ingroup forms
  */
 function netforum_auth_user_pass(&$form_state) {
+  include_once drupal_get_path('module', 'user') . '/user.pages.inc';
   $form = user_pass($form_state) ;
   $form['#validate'] = array('netforum_auth_user_pass_validate' => array());
   $form['#submit'] = array('user_pass_submit' => array());
@@ -228,13 +203,6 @@ function netforum_auth_user_pass(&$form_state) {
  * module.  That way they can reset their password if using drupal's password reset function
  */
 function netforum_auth_user_pass_validate($form, &$form_state) {
-/* TODO Validation handlers can pass information to submit handlers
-   Previously, it was necessary to embed validated results in the $form_values 
-   to carry them over from validation to submission. Now, though, validation 
-   handlers can simply place them into $form_state. This keeps the new 
-   $form_state['values'] clean, and ensures that it always represents the data 
-   submitted by the web user. */
-
   $name = $form_state['values']['name'];
   $account = user_load(array('mail' => $name, 'status' => 1));
   if (!$account) {
@@ -493,8 +461,11 @@ function netforum_auth_admin_settings_validate($form, &$form_state) {
     // }
     
   }
-  
-  if (strtolower($form_state['values']['netforum_auth_user_register']) != '<drupal>' || strtolower($form_state['values']['netforum_auth_forgotten_password']) != '<drupal>' || strtolower($form_state['values']['netforum_auth_user_editing']) != '<drupal>') {
+
+  if ( strtolower($form_state['values']['netforum_auth_user_register']) != '<drupal>' || 
+       strtolower($form_state['values']['netforum_auth_forgotten_password']) != '<drupal>' || 
+       strtolower($form_state['values']['netforum_auth_user_editing']) != '<drupal>' ||
+       $form_state['values']['netforum_auth_forgot_password_add'] != variable_get('netforum_auth_forgot_password_add', '')) {
     cache_clear_all('*', 'cache_menu', TRUE);
   }
 }
