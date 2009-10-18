@@ -59,7 +59,7 @@ function netforum_authentication_menu($may_cache) {
       'access' => true,
       'type' => MENU_CALLBACK,
     );
-    
+            
     $items[] = array('path' => 'nf_od_sso_transfer',
       'title' => t('Transfer to netFORUM OD w/ SSO'),
       'callback' => 'netforum_auth_od_sso_transfer',
@@ -528,6 +528,7 @@ function netforum_auth_shared_sso_check($token = '') {
   exit;
 }
 
+
 /**
  * Find the username and password for the individual and log them into eweb
  *
@@ -912,16 +913,18 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
       $needed_columns = array_unique(array('cst_type', 'cst_web_password', 'cst_id') + netforum_auth_user_fields());
       
       
-      //For Enterprise netforum
-      if (netforum_is_empty_guid($_netforum_auth_token) === false) { 
-        $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_netforum_auth_token));
-        if (is_null($result) || isset($result->WebValidateResult) === false ) {
-          drupal_set_message(t('Could not fetch netFORUM information for new user'), 'error');
-          break;
-        }
-        else {
-          $_netforum_auth_cst_key =  (string)$result->WebValidateResult;
-          $_netforum_auth_token = null; //unset this so we don't keep calling xweb
+      //For Enterprise netforum if we have the customer key or can get it
+      if (netforum_is_empty_guid($_netforum_auth_token) === false || netforum_is_empty_guid($_netforum_auth_cst_key) === false) {
+        if (netforum_is_empty_guid($_netforum_auth_token) === false) { 
+          $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_netforum_auth_token));
+          if (is_null($result) || isset($result->WebValidateResult) === false ) {
+            drupal_set_message(t('Could not fetch netFORUM information for new user'), 'error');
+            break;
+          }
+          else {
+            $_netforum_auth_cst_key =  (string)$result->WebValidateResult;
+            $_netforum_auth_token = null; //unset this so we don't keep calling xweb
+          }
         }
         
         if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) { 
@@ -946,7 +949,6 @@ function netforum_authentication_user($op, &$edit, &$account, $category = NULL) 
             $nf_user_data['cst_key'] = $_netforum_auth_cst_key;
           }
         }
-      
 	    }
 	    
 	    //For netFORUM Team/Pro/On Demand use the data returned from CheckEWebUser
@@ -1140,7 +1142,7 @@ function netforum_auth_user_categories($account) {
           netforum_auth_fresh_user_categories(true); //Important step!  Note that we have checked
           if ($response->attributes()->recordReturn > 0 ) {
             foreach ($response->MembershipProxyObject as $mpr) {
-              $user_categories[] = (string)$mpr->mbt_key;
+              $user_categories[] = (string)$mpr->mbr_mbt_key;
             }
           }
         }
@@ -1333,15 +1335,17 @@ function netforum_auth_eweb_sso_login($account = '') {
 
   // Check for custom cookie encryption
   global $_netforum_auth_password_plain;
-  $key = trim(variable_get('netforum_auth_custom_password_encryption_key', ''));
-  $iv = trim(variable_get('netforum_auth_custom_password_encryption_iv', ''));
-  if ($key != '' && $iv != '') {
-    $enc_pw = netforum_aes_encrypt($_netforum_auth_password_plain, $key, $iv);
+  if ($_netforum_auth_password_plain) {
+    $key = trim(variable_get('netforum_auth_custom_password_encryption_key', ''));
+    $iv = trim(variable_get('netforum_auth_custom_password_encryption_iv', ''));
+    if ($key != '' && $iv != '') {
+      $enc_pw = netforum_aes_encrypt($_netforum_auth_password_plain, $key, $iv);
+    }
+    else {
+      $enc_pw = false;
+    }
+    unset($_netforum_auth_password_plain);
   }
-  else {
-    $enc_pw = false;
-  }
-  unset($_netforum_auth_password_plain);
   
   foreach (netforum_auth_eweb_codes_for_sso() as $web_code) {
     if ($enc_pw) {
