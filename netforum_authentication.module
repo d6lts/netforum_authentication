@@ -1392,7 +1392,11 @@ function netforum_auth_eweb_sso_login($account = '') {
     unset($_netforum_auth_password_plain);
   }
   
-  $sso_cookie_expiration = time() + variable_get('netforum_auth_cookie_lifetime', ini_get('session.cookie_lifetime'));  
+  $sso_cookie_expiration = variable_get('netforum_auth_cookie_lifetime', ini_get('session.cookie_lifetime'));  
+  if ($sso_cookie_expiration > 0) {
+    $sso_cookie_expiration = time() + $sso_cookie_expiration;
+  }
+    
   foreach (netforum_auth_eweb_codes_for_sso() as $web_code) {
     if ($enc_pw) {
       setrawcookie($web_code .'login', $account->name, $sso_cookie_expiration, "/", variable_get('netforum_auth_cookie_domain', $_SERVER['HTTP_HOST']));
