@@ -1,5 +1,4 @@
 <?php
-// $Id$
 
 //TODO:  There are two places still calling GetQuery w/o regard to OD or Enterprise.  One for the forgot password section,
 // and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
