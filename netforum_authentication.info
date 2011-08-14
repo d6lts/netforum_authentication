@@ -3,4 +3,4 @@ description = Allows users to authenticate against netFORUM via xweb
 dependencies[] = netforum
 package = "netFORUM"
 
-core = 6.x
+core = 7.x
