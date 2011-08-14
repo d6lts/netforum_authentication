@@ -1,4 +1,10 @@
 <?php
+/**
+ * @file
+ * Install, update and uninstall functions for the netforum_authentication module.
+ *
+ */
+
 
 function netforum_auth_new_fields() {
   return array(
@@ -30,35 +36,39 @@ function netforum_auth_new_fields() {
 }
 
 /**
- * Implementation of hook_schema_alter().
+ * Implements hook_schema_alter().
  */
 function netforum_authentication_schema_alter(&$schema) {
   $schema['users']['fields'] = array_merge($schema['users']['fields'], netforum_auth_new_fields());
 }
 
 /**
-*  Implementation of hook_install
-*/
-
+ *  Implementation of hook_install
+ */
 function netforum_authentication_install() {
   // Drop module weight so we can override user paths
-  $weight = (int)db_result(db_query("SELECT weight FROM {system} WHERE name = 'user'"));
-  db_query("UPDATE {system} SET weight = %d WHERE name = 'netforum_authentication'", $weight + 1);
-  
+  $weight = (int) db_query("SELECT weight FROM {system} WHERE name = :name", array(':name' => 'user'))->fetchField();
+  db_update('system')->fields(array(
+    'weight' => $weight + 1,
+  ))->condition('name', 'netforum_authentication')->execute();
+
   $ret = array();
-  foreach(netforum_auth_new_fields() as $name => $field) {
-    db_add_field($ret, 'users', $name, $field);
+  foreach (netforum_auth_new_fields() as $name => $field) {
+    db_add_field('users', $name, $field);
   }
 
 }
 
+/**
+ * Implements hook_uninstall().
+ */
 function netforum_authentication_uninstall() {
-  
+
   $ret = array();
-  foreach(array_keys(netforum_auth_new_fields()) as $name) {
-    db_drop_field($ret, 'users', $name);
-  }  
-  
+  foreach (array_keys(netforum_auth_new_fields()) as $name) {
+    db_drop_field('users', $name);
+  }
+
   variable_del('netforum_auth_user_register');
   variable_del('netforum_auth_forgotten_password');
   variable_del('netforum_auth_forgot_password_add');
