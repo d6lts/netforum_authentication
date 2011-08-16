@@ -47,9 +47,8 @@ function netforum_authentication_schema_alter(&$schema) {
  */
 function netforum_authentication_install() {
   // Drop module weight so we can override user paths
-  $weight = (int) db_query("SELECT weight FROM {system} WHERE name = :name", array(':name' => 'user'))->fetchField();
   db_update('system')->fields(array(
-    'weight' => $weight + 1,
+    'weight' => 10,
   ))->condition('name', 'netforum_authentication')->execute();
 
   $ret = array();
