@@ -1,5 +1,4 @@
 <?php
-//TODO:  Update the menu so it doesn't trample on root!  admin/config nowadays I think?
 
 //TODO:  There are two places still calling GetQuery w/o regard to OD or Enterprise.  One for the forgot password section,
 // and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
@@ -145,9 +144,6 @@ function netforum_auth_user_editing_redirect($uid) {
   }
   else {
     include_once DRUPAL_ROOT . '/' . drupal_get_path('module', 'user') . '/user.pages.inc';
-    // TODO Convert "user_load" to "user_load_multiple" if "$uid" is other than a uid.
-    // To return a single user object, wrap "user_load_multiple" with "array_shift" or equivalent.
-    // Example: array_shift(user_load_multiple(array(), $uid))
     $edit = user_load($uid);
     return user_edit($edit);
   }
@@ -815,11 +811,13 @@ function netforum_authentication_info($field = 0) {
 /**
  * Implements hook_user_load().
  */
-function netforum_authentication_user_load($users) {
+ // TODO re-enable this so it gets the correct info when the user is loaded.  The intention is to always have the latest information on request,
+ // but it appears that it times out when it is enabled, the save call may be the culprit here.
+function disabled_netforum_authentication_user_load($users) {
   //we do a lot on load because whenever a user is displayed, logged in, or worked with they should have the most up to date information,
   //which means getting all of their data from netFORUM
   
-  // TODO:  This now loads multiple users, as a quick fix we iterate over each user.
+  // TODO:  This function might load multiple users, as a quick fix we iterate over each user.
   // FAR PREFERABLE woud be to execute one xWeb request and iterate over the results
   foreach ($users as $account) {
     if (!netforum_is_empty_guid($account->cst_key)) {
@@ -995,9 +993,9 @@ function netforum_authentication_user_logout($account) {
 }
 
 /**
- * Implements hook_user_insert().
+ * Implements hook_user_presave().
  */
-function netforum_authentication_user_insert(&$edit, $account, $category) {
+function netforum_authentication_user_presave(&$edit, $account, $category) {
   global $_netforum_auth_token, $_netforum_auth_cst_key, $_netforum_auth_eweb_od_user;
 
   $nf_user_data = array(); //The goal is to populate this so we can add in the new user
@@ -1059,85 +1057,89 @@ function netforum_authentication_user_insert(&$edit, $account, $category) {
   }
 
 
+  // NOTE:  We could probably load one less var and work directly with $edit.
   if ($nf_user_data) {
-    # TODO:  Do not kick off the save here, it causes an error.
-    # Figure out the right spot to keep it.
-    // user_save($account, $nf_user_data);
+    foreach ($nf_user_data as $key => $val) {
+      $edit[$key] = $val;
+    }
   }
-
+  
 
 }
 
 /**
- * Implements hook_user_presave().
+ * Implements hook_user_insert().
  */
-function netforum_authentication_user_presave(&$edit, $account, $category) {
-  
-  if (netforum_is_empty_guid($account->cst_key) === false) {
-    if (netforum_is_enterprise()) { //We only push data back to Enterprise netforum
-      $eml_field = _netforum_auth_get_email_field('Customer');
-      //this array keeps key => value pairs to correspond to the netFORUM information to be updated.
-      $nf_variables = array();
-      if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) == '<drupal>') {
-        if (isset($edit['mail']) && $edit['mail'] != '' && $edit['mail'] != $account->mail) {
-          $nf_variables[$eml_field] = $edit['mail'];
-        }
-        if (isset($edit['pass']) && empty($edit['pass']) === false) {
-          $nf_variables['cst_web_password'] = $edit['pass'];
-          $nf_variables['cst_web_force_password_change'] = 0;
-          //Save cst_web_password because we use it if the user is logging in and xWeb is not available.
-          $edit['cst_web_password'] = netforum_auth_hash_pw($edit['pass']);
-        }
-        if (isset($edit['name']) && $edit['name'] != '' && $edit['name'] != $account->name) {
-          $nf_variables['cst_web_login'] = $edit['name'];
-        }
-      }
-
-      if (count($nf_variables) > 0) {
-        $success = false; //don't assume it worked by default, this is set on success below
-        if ($account->cst_type == 'Individual') { //this way customers and individuals can log in and edit info.  Beware when setting variables above that they are cst_type agnostic
-          $data_node = netforum_ind_info_parameters($nf_variables);
-          $response = netforum_xweb_request('SetIndividualInformation', array('IndividualKey' => $account->cst_key, 'oUpdateNode' => $data_node));
-          if (isset($response) && $response->attributes()->recordReturn == 1 && $response->IndividualObject->ind_cst_key == $account->cst_key) {
-            $success = true;
-          }
-        }
-        elseif ($account->cst_type == 'Organization') {
-          $data_node = netforum_org_info_parameters($nf_variables);
-          $response = netforum_xweb_request('SetOrganizationInformation', array('OrganizationKey' => $account->cst_key, 'oUpdateNode' => $data_node));
-          if ( isset($response) && $response->attributes()->recordReturn == 1 && $response->OrganizationObject->org_cst_key == $account->cst_key) {
-            $success = true;
-          }
-        }
-
-        if ($success === false) {
-          drupal_set_message(t('Information update failed, please try again in a few minutes.'), 'error');
-          watchdog('netforum', "Could not update user information in netFORUM for %name", array('%name' => $account->name), WATCHDOG_ERROR);
-          $path = isset($_GET['q']) ? $_GET['q'] : '';
-          $query = drupal_query_string_encode($_GET, array('q'));
-          if ($query != '') {
-            $path .= '?' . $query;
-          }
-          drupal_goto($path);
-        }
-        else {
-          $_SESSION['netforum_auth_skip_info_sync'] = true;
-        }
-      }
-    }
-
-    if (isset($edit['roles']) ) {
-      //keep track of any roles set in case it was set by an admin.  If the admin added a role that doesn't get set via netforum remember that and
-      //add / save it in when the user is loaded.  If the role is later something gets set for this user via netforum, then when it is removed (ie, no longer
-      //set via netforum) it will also be removed from the user record.  That means you can make the website override netforum, but if netforum later gives that
-      //permission it will be taken away when netforum also takes it away.
-
-      //what's the phrase?  Store em all and let the load sort it out?
-      $edit['netforum_auth_admin_set_roles'] = $edit['roles'];
-    }
-  }
-
-}
+ // TODO:  This used to be presave, now it is on insert but it is not quite right.
+ // It does a few things, including posting back to netforum when something changes
+ // and role edit tracking
+// function netforum_authentication_user_insert(&$edit, $account, $category) {
+//   
+//   if (netforum_is_empty_guid($account->cst_key) === false) {
+//     if (netforum_is_enterprise()) { //We only push data back to Enterprise netforum
+//       $eml_field = _netforum_auth_get_email_field('Customer');
+//       //this array keeps key => value pairs to correspond to the netFORUM information to be updated.
+//       $nf_variables = array();
+//       if (strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) == '<drupal>') {
+//         if (isset($edit['mail']) && $edit['mail'] != '' && $edit['mail'] != $account->mail) {
+//           $nf_variables[$eml_field] = $edit['mail'];
+//         }
+//         if (isset($edit['pass']) && empty($edit['pass']) === false) {
+//           $nf_variables['cst_web_password'] = $edit['pass'];
+//           $nf_variables['cst_web_force_password_change'] = 0;
+//           //Save cst_web_password because we use it if the user is logging in and xWeb is not available.
+//           $edit['cst_web_password'] = netforum_auth_hash_pw($edit['pass']);
+//         }
+//         if (isset($edit['name']) && $edit['name'] != '' && $edit['name'] != $account->name) {
+//           $nf_variables['cst_web_login'] = $edit['name'];
+//         }
+//       }
+// 
+//       if (count($nf_variables) > 0) {
+//         $success = false; //don't assume it worked by default, this is set on success below
+//         if ($account->cst_type == 'Individual') { //this way customers and individuals can log in and edit info.  Beware when setting variables above that they are cst_type agnostic
+//           $data_node = netforum_ind_info_parameters($nf_variables);
+//           $response = netforum_xweb_request('SetIndividualInformation', array('IndividualKey' => $account->cst_key, 'oUpdateNode' => $data_node));
+//           if (isset($response) && $response->attributes()->recordReturn == 1 && $response->IndividualObject->ind_cst_key == $account->cst_key) {
+//             $success = true;
+//           }
+//         }
+//         elseif ($account->cst_type == 'Organization') {
+//           $data_node = netforum_org_info_parameters($nf_variables);
+//           $response = netforum_xweb_request('SetOrganizationInformation', array('OrganizationKey' => $account->cst_key, 'oUpdateNode' => $data_node));
+//           if ( isset($response) && $response->attributes()->recordReturn == 1 && $response->OrganizationObject->org_cst_key == $account->cst_key) {
+//             $success = true;
+//           }
+//         }
+// 
+//         if ($success === false) {
+//           drupal_set_message(t('Information update failed, please try again in a few minutes.'), 'error');
+//           watchdog('netforum', "Could not update user information in netFORUM for %name", array('%name' => $account->name), WATCHDOG_ERROR);
+//           // $path = isset($_GET['q']) ? $_GET['q'] : '';
+//           // $query = drupal_query_string_encode($_GET, array('q'));
+//           // if ($query != '') {
+//           //   $path .= '?' . $query;
+//           // }
+//           // drupal_goto($path);
+//         }
+//         else {
+//           $_SESSION['netforum_auth_skip_info_sync'] = true;
+//         }
+//       }
+//     }
+// 
+//     if (isset($edit['roles']) ) {
+//       //keep track of any roles set in case it was set by an admin.  If the admin added a role that doesn't get set via netforum remember that and
+//       //add / save it in when the user is loaded.  If the role is later something gets set for this user via netforum, then when it is removed (ie, no longer
+//       //set via netforum) it will also be removed from the user record.  That means you can make the website override netforum, but if netforum later gives that
+//       //permission it will be taken away when netforum also takes it away.
+// 
+//       //what's the phrase?  Store em all and let the load sort it out?
+//       $edit['netforum_auth_admin_set_roles'] = $edit['roles'];
+//     }
+//   }
+// 
+// }
 
 /**
  * Implements hook_user_update().
