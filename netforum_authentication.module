@@ -811,8 +811,6 @@ function netforum_authentication_info($field = 0) {
 /**
  * Implements hook_user_load().
  */
- // TODO re-enable this so it gets the correct info when the user is loaded.  The intention is to always have the latest information on request,
- // but it appears that it times out when it is enabled, the save call may be the culprit here.
 function netforum_authentication_user_load($users) {
   //we do a lot on load because whenever a user is displayed, logged in, or worked with they should have the most up to date information,
   //which means getting all of their data from netFORUM
@@ -940,7 +938,7 @@ function netforum_authentication_user_load($users) {
         }
 
         if (count($new_info) > 0) {
-          //TODO:  Fix?
+          //TODO:  Test & Fix?
           user_save($account, $new_info);
         }
       }
@@ -1072,11 +1070,10 @@ function netforum_authentication_user_presave(&$edit, $account, $category) {
 }
 
 /**
- * Implements hook_user_insert().
+ * Pushes drupal edits to netforum, invoked during pre-save
  */
- // TODO:  This used to be presave, now it is on insert but it is not quite right.
- // It does a few things, including posting back to netforum when something changes
- // and role edit tracking
+ // TODO:  Change this to get called or invoked after update, make sure that the manipulation of
+ // the edit var at the end gets moved to the right spot.  Make sure skip info sync still makes sense.
 function netforum_auth_push_account_changes(&$edit, $account, $category) {
   
   if (netforum_is_empty_guid($account->cst_key) === false) {
@@ -1736,13 +1733,9 @@ function netforum_auth_user_login_validate($form, &$form_state) {
   if (netforum_authentication_auth($form_state['values']['name'], $form_state['values']['pass'], '')) {
     //Log user in, or register new user if not already present.
     user_external_login_register($form_state['values']['name'], 'netforum_authentication');
+    
     //Write session, update timestamp, run user'login'hook.
-    
-    // TODO: this hook has been deprecated, figure out what it should be.
-    // user_authenticate_finalize($form_state['values']);
-    
-    // TODO: I think that it is still falling through to the user validation and trying against the local db, which produces
-    // an error message on successful login.
+    user_login_finalize($form_state);
   }
   else {
     //Fall back to the local validation
