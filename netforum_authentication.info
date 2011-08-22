@@ -4,3 +4,6 @@ dependencies[] = netforum
 package = "netFORUM"
 
 core = 7.x
+files[] = netforum_authentication.install
+files[] = netforum_authentication.module
+configure = admin/config/people/netforum-authentication

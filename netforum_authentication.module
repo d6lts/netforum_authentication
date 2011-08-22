@@ -819,7 +819,7 @@ function netforum_authentication_user_load($users) {
   // FAR PREFERABLE woud be to execute one xWeb request and iterate over the results
   foreach ($users as $account) {
     if (!netforum_is_empty_guid($account->cst_key)) {
-      if ($_SESSION['netforum_auth_skip_info_sync'] !== true) {
+      if (!isset($_SESSION['netforum_auth_skip_info_sync']) || $_SESSION['netforum_auth_skip_info_sync'] !== true) {
         global $_netforum_auth_already_checked_roles;
         $ignore_roles = netforum_auth_ignore_roles();
         $new_info = array();
@@ -931,7 +931,7 @@ function netforum_authentication_user_load($users) {
 
           foreach ($cst_fields as $field) {
             $field_value = (string) $cst_obj->{$field};
-            if (empty($field) === false && $account->data[$field] != $field_value) {
+            if (empty($field) === false && (!isset($account->data[$field]) || $account->data[$field] != $field_value)) {
               $new_info['data'][$field] = $field_value;
             }
           }
@@ -1278,7 +1278,6 @@ function netforum_auth_user_categories($account) {
       $user_categories = module_invoke_all('netforum_auth_od_user_categories', $account );
     }
   }
-
 
   return $user_categories;
 }
@@ -1722,7 +1721,7 @@ function netforum_authentication_form_alter(&$form, &$form_state, $form_id) {
  * against netFORUM and either kick off the user creation/login process or
  * return a form error.
  */
-function netforum_auth_user_login_validate($form, &$form_state) {
+function netforum_auth_user_login_validate(&$form, &$form_state) {
   global $user;
   if (!empty($user->uid)) {
     // Another module has already handled authentication.
@@ -1733,14 +1732,18 @@ function netforum_auth_user_login_validate($form, &$form_state) {
   if (netforum_authentication_auth($form_state['values']['name'], $form_state['values']['pass'], '')) {
     //Log user in, or register new user if not already present.
     user_external_login_register($form_state['values']['name'], 'netforum_authentication');
-    
-    //Write session, update timestamp, run user'login'hook.
-    user_login_finalize($form_state);
+    // We don't clobber the form validators which look for this in the form state.  Set it so that it
+    // doesn't bomb.
+    $form_state['uid'] = $user->uid;
+    $form['#submit'] = array(); // NOTE:  We took the form by reference and edited it here.  
+    // User user_external_login_register will call the submit method (user_login_submit) for us,
+    // so clear it out to prevent it from continuing.
   }
   else {
     //Fall back to the local validation
     user_login_authenticate_validate($form, $form_state);
   }
+  
 }
 
 
