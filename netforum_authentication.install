@@ -46,16 +46,9 @@ function netforum_authentication_schema_alter(&$schema) {
  *  Implementation of hook_install
  */
 function netforum_authentication_install() {
-  // Drop module weight so we can override user paths
-  db_update('system')->fields(array(
-    'weight' => 10,
-  ))->condition('name', 'netforum_authentication')->execute();
-
-  $ret = array();
   foreach (netforum_auth_new_fields() as $name => $field) {
     db_add_field('users', $name, $field);
   }
-
 }
 
 /**
@@ -63,7 +56,6 @@ function netforum_authentication_install() {
  */
 function netforum_authentication_uninstall() {
 
-  $ret = array();
   foreach (array_keys(netforum_auth_new_fields()) as $name) {
     db_drop_field('users', $name);
   }
