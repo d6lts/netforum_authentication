@@ -889,10 +889,16 @@ function netforum_authentication_user_load($users) {
             $_netforum_auth_must_change_pw = true;
           }
 
+          $user_table_fields = array('cst_key','cst_type','cst_id','cst_web_password');
           foreach ($cst_fields as $field) {
             $field_value = (string) $cst_obj->{$field};
-            if (empty($field) === false && (!isset($account->data[$field]) || $account->data[$field] != $field_value)) {
-              $new_info['data'][$field] = $field_value;
+            if (empty($field) === false) {
+              if (in_array($field, $user_table_fields) && (!isset($account->$field) || $account->$field != $field_value)) {
+                $new_info[$field] = $field_value;
+              }
+              elseif (!isset($account->data[$field]) || $account->data[$field] != $field_value) {
+                $new_info['data'][$field] = $field_value;
+              }
             }
           }
         }
