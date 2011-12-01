@@ -101,7 +101,7 @@ function netforum_auth_user_roles_access() {
  *
  * called by the user/ID/edit url if drupal is set to use an external site for editing user info
  */
-function netforum_auth_user_editing_redirect($uid) {
+function netforum_auth_user_editing_redirect($form_name, $account) {
   global $user;
   if (netforum_is_empty_guid($user->cst_key) === false && strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
     $loc = variable_get('netforum_auth_user_editing', '');
@@ -114,8 +114,7 @@ function netforum_auth_user_editing_redirect($uid) {
   }
   else {
     include_once DRUPAL_ROOT . '/' . drupal_get_path('module', 'user') . '/user.pages.inc';
-    $edit = user_load($uid);
-    return drupal_get_form('user_profile_form', $ed);
+    return drupal_get_form($form_name, $account);
   }
 }
 
