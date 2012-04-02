@@ -132,6 +132,7 @@ function netforum_auth_user_editing_redirect($uid) {
   global $user;
   if (netforum_is_empty_guid($user->cst_key) === false && strtolower(variable_get('netforum_auth_user_editing', '<drupal>')) != '<drupal>') {
     $loc = variable_get('netforum_auth_user_editing', '');
+    unset($_REQUEST['destination']);
     if (netforum_is_team() && stristr($loc, "netforumondemand.com")) { 
       netforum_auth_od_sso_transfer($loc);
     }
@@ -153,6 +154,7 @@ function netforum_auth_user_editing_redirect($uid) {
  */
 function netforum_auth_forgotten_password_redirect() {
   if (strtolower(variable_get('netforum_auth_forgotten_password', '<drupal>')) != '<drupal>') {
+    unset($_REQUEST['destination']);
     drupal_goto(variable_get('netforum_auth_forgotten_password', ''));
   }
   elseif (variable_get('netforum_auth_forgot_password_add', 0) == 1) {
@@ -170,6 +172,7 @@ function netforum_auth_forgotten_password_redirect() {
  */
 function netforum_auth_user_register_redirect() {
   if (strtolower(variable_get('netforum_auth_user_register', '<drupal>')) != '<drupal>') {
+    unset($_REQUEST['destination']);
     drupal_goto(variable_get('netforum_auth_user_register', ''));
   }
   else {
@@ -1423,6 +1426,7 @@ function netforum_auth_eweb_sso_logout() {
   }
   if (strtolower(variable_get('netforum_auth_sso_logout_url', '<drupal>')) != '<drupal>') {
     global $base_url;
+    unset($_REQUEST['destination']);
     drupal_goto(variable_get('netforum_auth_sso_logout_url', '') ."?RedirectURL=$base_url");
   }
 }
@@ -1473,6 +1477,7 @@ function netforum_auth_od_sso_transfer($loc = "") {
     } 
   }
 
+  unset($_REQUEST['destination']);
   drupal_goto($external);
 }
 
