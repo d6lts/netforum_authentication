@@ -1662,6 +1662,7 @@ function netforum_authentication_form_alter(&$form, &$form_state, $form_id) {
  */
 function netforum_auth_user_login_validate($form, &$form_state) { 
   global $user; 
+  global $_netforum_auth_eweb_od_user;
   if (!empty($user->uid)) { 
     // Another module has already handled authentication. 
     return; 
@@ -1669,10 +1670,33 @@ function netforum_auth_user_login_validate($form, &$form_state) {
 
   //Call our custom authentication function, a holdover from Drupal 5 that makes for easy porting
   if (netforum_authentication_auth($form_state['values']['name'], $form_state['values']['pass'], '')) { 
-    //Log user in, or register new user if not already present. 
-    user_external_login_register($form_state['values']['name'], 'netforum_authentication'); 
-    //Write session, update timestamp, run user'login'hook. 
-    user_authenticate_finalize($form_state['values']);
+    // Special handling for NF OD since we have the use at hand to track email changes between users.
+    if (netforum_is_team() && isset($_netforum_auth_eweb_od_user)) {
+      //Log user in, or register new user if not already present. 
+      $email = (string) $_netforum_auth_eweb_od_user->eml_address;
+      $cst_id = (string) $_netforum_auth_eweb_od_user->cst_id;
+      // Try to load existing account, by cst_id.
+      $account = user_load(array('cst_id' => $cst_id));
+      if ($account && $form_state['values']['name'] != $email) {
+        $form_state['values']['name'] = $email;
+        $user = $account;
+        $user->name = $email;
+        $user->mail = $email;
+        // Finalize and update account.
+        user_save($user, (array) $user);
+      }
+      else {
+        // Create new account.
+        user_external_login_register($form_state['values']['name'], 'netforum_authentication');
+      }
+
+      user_authenticate_finalize($form_state['values']);
+    }
+    else { // enterprise version - #TODO handle email changes for enterprise users too.
+      user_external_login_register($form_state['values']['name'], 'netforum_authentication'); 
+      //Write session, update timestamp, run user'login'hook. 
+      user_authenticate_finalize($form_state['values']);
+    }
   }
   else {
     //Fall back to the local validation
