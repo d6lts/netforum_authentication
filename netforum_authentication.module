@@ -953,6 +953,7 @@ function netforum_authentication_user_logout($account) {
   if (netforum_is_empty_guid($account->cst_key) === false) {
     netforum_auth_eweb_sso_logout();
     unset($_SESSION['_netforum_auth_eweb_pw']);
+    session_destroy();
   }
 }
 
@@ -1038,7 +1039,7 @@ function netforum_authentication_user_presave(&$edit, $account, $category) {
     //permission it will be taken away when netforum also takes it away.
 
     //what's the phrase?  Store em all and let the load sort it out?
-    $edit['data']['netforum_auth_admin_set_roles'] = $edit['roles'];
+    $edit['data']['netforum_auth_admin_set_roles'] = array_filter($edit['roles']);
   }
   
 
