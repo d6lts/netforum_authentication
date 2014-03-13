@@ -367,6 +367,14 @@ function netforum_auth_admin_settings() {
       '#default_value' => variable_get('netforum_auth_shared_sso_url', ''),
       '#size' => 40,
     );
+    
+    $form['sso']['netforum_sso_web_login'] = array(
+      '#title' => t('Allow SSO by redirecting to this site after eWeb Login'),
+      '#type' => 'checkbox',
+      '#description' => t("If users are entering their username and password on another site, they can be redirected to /netforum_sso_web_login with 'WebLoginKey' and 'destination' as queiry params to be logged in and optionall redirected after login."),
+      '#default_value' => variable_get('netforum_sso_web_login', 0),
+    );
+    
   }
 
   return system_settings_form($form);
@@ -1398,7 +1406,7 @@ function netforum_auth_eweb_codes_for_sso() {
  */
 function netforum_auth_eweb_sso_login($account = '') {
   if (netforum_is_team()) {
-    watchdog('netforum', 'Cannot perform eWeb SSO login for non-enterprise versions of netforum', WATCHDOG_WARNING);
+    watchdog('netforum', 'Cannot perform eWeb SSO login for non-enterprise versions of netforum', array(), WATCHDOG_WARNING);
     return;
   }
   if ($account == '') {
@@ -1525,21 +1533,26 @@ function netforum_auth_od_sso_transfer($loc = "") {
 }
 
 function netforum_auth_from_web_login_key(){
-  if (netforum_is_valid_guid($_GET['WebLoginKey'])){
-    $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_GET['WebLoginKey']));
-    if (is_null($result) === false && isset($result->WebValidateResult) === true ) {
-      $cst_key =  (string) $result->WebValidateResult;
-      if (netforum_is_valid_guid($cst_key)){
-        $nf_customer_data = _netforum_auth_fetch_customer_matching_query("cst_key = '$cst_key'");
+  if (variable_get('netforum_sso_web_login', 0) == 1){
+    if (netforum_is_valid_guid($_GET['WebLoginKey'])){
+      $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_GET['WebLoginKey']));
+      if (is_null($result) === false && isset($result->WebValidateResult) === true ) {
+        $cst_key =  (string) $result->WebValidateResult;
+        if (netforum_is_valid_guid($cst_key)){
+          $nf_customer_data = _netforum_auth_fetch_customer_matching_query("cst_key = '$cst_key'");
       
-        if (empty($nf_customer_data) === false ) {
-          $account = netforum_auth_find_or_create_user_by_email($nf_customer_data['mail'], $nf_customer_data); 
-          // Log user in.
-          $form_state['uid'] = $account->uid;
-          user_login_submit(array(), $form_state);
-        }        
+          if (empty($nf_customer_data) === false ) {
+            $account = netforum_auth_find_or_create_user_by_email($nf_customer_data['mail'], $nf_customer_data); 
+            // Log user in.
+            $form_state['uid'] = $account->uid;
+            user_login_submit(array(), $form_state);
+          }        
+        }
       }
     }
+  }
+  else {
+    watchdog('netforum', "Received request for SSO login with WebLoginKey, but 'Allow SSO by redirecting to this site after eWeb Login' is not enabled in the settings.", array(), WATCHDOG_WARNING, l(t('settings'), 'admin/config/people/netforum-authentication'));
   }
   
   if (!isset($account)){
