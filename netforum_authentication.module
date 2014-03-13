@@ -67,6 +67,13 @@ function netforum_authentication_menu() {
     'access callback' => TRUE,
     'type' => MENU_CALLBACK,
   );
+  
+  $items['netforum_sso_web_login'] = array(
+    'title' => 'netFORM Authentication Shared SSO',
+    'page callback' => 'netforum_auth_from_web_login_key',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
 
 
   return $items;
@@ -157,55 +164,51 @@ function netforum_auth_user_register_redirect() {
  */
 function netforum_auth_user_pass_validate($form, &$form_state) {
   if (variable_get('netforum_auth_forgot_password_add', 0) == 1) {
-    $name = $form_state['values']['name'];
-    $account = array_shift(user_load_multiple(array(), array('mail' => $name, 'status' => 1)));
-    if (!$account) {
-      $account = array_shift(user_load_multiple(array(), array('name' => $name, 'status' => 1)));
-    }
-    if (!$account) {
-      $eml_field = _netforum_auth_get_email_field('Customer');
-      $query = array(
-        'szObjectName' => 'Customer @TOP 1',
-        'szColumnList' => 'cst_type, cst_web_login, ' . $eml_field,
-        'szWhereClause' => "(" . $eml_field . "  = '$name' OR cst_web_login = '$name')",
-        'szOrderBy' => '',
-      );
-      $response = netforum_xweb_request('GetQuery', $query);
-      if ($response && $response->attributes()->recordReturn == 1) {
-        $cst_obj = $response->CustomerObject;
-        $cst_name = (string) $cst_obj->cst_web_login;
-        $cst_mail = (string) $cst_obj->{$eml_field};
-        $cst_type = (string) $cst_obj->cst_type;
-        $cst_key = (string) $cst_obj->cst_key;
-
-        if (empty($cst_name)) {
-          $cst_name = $cst_mail;
-        }
-        //adapted from user_authenticate in the user module to add a new user
-        $userinfo = array(
-          'name' => $cst_name,
-          'mail' => $cst_mail,
-          'pass' => user_password(),
-          'cst_key' => $cst_key,
-          'cst_type' => $cst_type,
-          'init' => $name,
-          'status' => 1,
-        );
-        $userinfo["authname_netforum_authentication"] = $name;
-        $account = user_save(drupal_anonymous_user(), $userinfo);
-        // Terminate if an error occurred during user_save().
-        if (!$account) {
-          drupal_set_message(t("Error saving user account."), 'error');
-          return;
-        }
-        user_set_authmaps($account, array("authname_netforum_authentication" => $name));
-        watchdog('user', 'New external user: %user using module %module.', array('%user' => $name, '%module' => 'netforum_authentication'), WATCHDOG_NOTICE, l(t('edit'), 'user/' . $account->uid . '/edit'));
-      }
-    }
+    $account = netforum_auth_find_or_create_user_by_email($form_state['values']['name']);
     if (isset($account->uid)) {
       form_set_value(array('#parents' => array('account')), $account, $form_state);
     }
   }
+}
+
+function netforum_auth_find_or_create_user_by_email($name, $nf_customer_data = null){
+  $accounts = user_load_multiple(array(), array('mail' => $name, 'status' => 1));
+  if (!$accounts) {
+    $accounts = user_load_multiple(array(), array('name' => $name, 'status' => 1));
+  }
+  $account = array_shift($accounts);
+  if (!$account) {
+    
+    if ($nf_customer_data == null){
+      $nf_customer_data = _netforum_auth_fetch_customer_matching_query("(" . _netforum_auth_get_email_field('Customer') . "  = '$name' OR cst_web_login = '$name')");
+    }
+    
+    $cst_name = $nf_customer_data['cst_web_login'];
+    if (empty($cst_name)) {
+      $cst_name = $nf_customer_data['mail'];
+    }
+    //adapted from user_authenticate in the user module to add a new user
+    $userinfo = array(
+      'name' => $cst_name,
+      'mail' => $nf_customer_data['mail'],
+      'pass' => user_password(),
+      'cst_key' => $nf_customer_data['cst_key'],
+      'cst_type' => $nf_customer_data['cst_type'],
+      'init' => $name,
+      'status' => 1,
+    );
+    $userinfo["authname_netforum_authentication"] = $name;
+    $account = user_save(drupal_anonymous_user(), $userinfo);
+    // Terminate if an error occurred during user_save().
+    if (!$account) {
+      drupal_set_message(t("Error saving user account."), 'error');
+      return;
+    }
+    user_set_authmaps($account, array("authname_netforum_authentication" => $name));
+    watchdog('user', 'New external user: %user using module %module.', array('%user' => $name, '%module' => 'netforum_authentication'), WATCHDOG_NOTICE, l(t('edit'), 'user/' . $account->uid . '/edit'));
+
+  }
+  return $account;
 }
 
 
@@ -642,6 +645,38 @@ function _netforum_auth_match_password_token($cst_web_password, $token) {
 }
 
 /**
+ * Fetch a set of customer information via xWeb from a given where clause 
+ *
+ * Returns an array of keys and values with loaded customer information, or an emtpy
+ * array if none found.
+ */
+function _netforum_auth_fetch_customer_matching_query($cst_szWhereClause) {
+  $nf_user_data = array(); //The goal is to populate this so we can add in the new user
+  $eml_field = _netforum_auth_get_email_field('Customer');
+  $needed_columns = array_unique(array('cst_type', 'cst_web_login', 'cst_web_password', 'cst_id', 'cst_key') + netforum_auth_user_fields());
+  
+  $query = array(
+    'szObjectName' => 'Customer',
+    'szColumnList' => $eml_field . ", " . implode($needed_columns, ", "),
+    'szWhereClause' => $cst_szWhereClause,
+    'szOrderBy' => '',
+  );
+  $response = netforum_xweb_request('GetQuery', $query);
+  if (isset($response) && $response->attributes()->recordReturn == 1) {
+    $cst_obj = $response->CustomerObject;
+    $nf_user_data = array(
+      'mail' => (string) $cst_obj->{$eml_field},
+    );
+    foreach ($needed_columns as $col) {
+      $nf_user_data[$col] = (string) $cst_obj->{$col};
+    }
+  }
+  
+  return $nf_user_data;
+  
+}
+
+/**
  *
  * uses xWeb to get an auth token, returns true if the token is set,
  * false if the token is empty (eg, all zeroes)
@@ -965,7 +1000,6 @@ function netforum_authentication_user_presave(&$edit, $account, $category) {
   global $_netforum_auth_token, $_netforum_auth_cst_key, $_netforum_auth_eweb_od_user, $_netforum_auth_already_checked_roles, $_netforum_auth_assigned_roles;
 
   $nf_user_data = array(); //The goal is to populate this so we can add in the new user
-  $eml_field = _netforum_auth_get_email_field('Customer');
   $needed_columns = array_unique(array('cst_type', 'cst_web_password', 'cst_id') + netforum_auth_user_fields());
 
   // If there were account changes, push them up now
@@ -986,34 +1020,15 @@ function netforum_authentication_user_presave(&$edit, $account, $category) {
     }
 
     if (netforum_is_empty_guid($_netforum_auth_cst_key) === false) {
-
-      $query = array(
-        'szObjectName' => 'Customer',
-        'szColumnList' => $eml_field . ", " . implode($needed_columns, ", "),
-        'szWhereClause' => "cst_key = '" . $_netforum_auth_cst_key . "'",
-        'szOrderBy' => '',
-      );
-      $response = netforum_xweb_request('GetQuery', $query);
-      if (isset($response) && $response->attributes()->recordReturn == 1) {
-        $cst_obj = $response->CustomerObject;
-        $nf_user_data = array(
-          'cst_key' => $_netforum_auth_cst_key,
-          'mail' => (string) $cst_obj->{$eml_field},
-        );
-        foreach ($needed_columns as $col) {
-          $nf_user_data[$col] = (string) $cst_obj->{$col};
-        }
-        $nf_user_data['cst_web_password'] = (string) $cst_obj->cst_web_password;
-      }
-      else {
-        $nf_user_data['cst_key'] = $_netforum_auth_cst_key;
-      }
+      $nf_user_data = _netforum_auth_fetch_customer_matching_query("cst_key = '" . $_netforum_auth_cst_key . "'");
+      $nf_user_data['cst_key'] = $_netforum_auth_cst_key; // just in case we didn't get a result, save what we know.
     }
 
   }
 
   //For netFORUM Team/Pro/On Demand use the data returned from CheckEWebUser
   if (isset($_netforum_auth_eweb_od_user)) {
+    $eml_field = _netforum_auth_get_email_field('Customer');
     $nf_user_data = array(
       'cst_key' => (string) $_netforum_auth_eweb_od_user->cst_key,
       'mail' => (string) $_netforum_auth_eweb_od_user->{$eml_field},
@@ -1024,8 +1039,6 @@ function netforum_authentication_user_presave(&$edit, $account, $category) {
     $nf_user_data['cst_web_password'] = (string) $_netforum_auth_eweb_od_user->cst_web_password;
   }
 
-
-  // NOTE:  We could probably load one less var and work directly with $edit up above
   if ($nf_user_data) {
     foreach ($nf_user_data as $key => $val) {
       $edit[$key] = $val;
@@ -1509,6 +1522,37 @@ function netforum_auth_od_sso_transfer($loc = "") {
   }
 
   drupal_goto($external);
+}
+
+function netforum_auth_from_web_login_key(){
+  if (netforum_is_valid_guid($_GET['WebLoginKey'])){
+    $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_GET['WebLoginKey']));
+    if (is_null($result) === false && isset($result->WebValidateResult) === true ) {
+      $cst_key =  (string) $result->WebValidateResult;
+      if (netforum_is_valid_guid($cst_key)){
+        $nf_customer_data = _netforum_auth_fetch_customer_matching_query("cst_key = '$cst_key'");
+      
+        if (empty($nf_customer_data) === false ) {
+          $account = netforum_auth_find_or_create_user_by_email($nf_customer_data['mail'], $nf_customer_data); 
+          // Log user in.
+          $form_state['uid'] = $account->uid;
+          user_login_submit(array(), $form_state);
+        }        
+      }
+    }
+  }
+  
+  if (!isset($account)){
+    drupal_set_message(t('Could not authenticate user'), 'error');
+  }
+  
+  if (isset($_GET['destination'])) {
+    $destination = array('destination' => $_GET['destination']);
+  }
+  else {
+    $destination = '/';
+  }
+  drupal_goto($destination);
 }
 
 /**
