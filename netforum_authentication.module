@@ -1,5 +1,5 @@
 <?php
-
+module_load_include('pages.inc', 'user'); // for the user_logout() method
 //TODO:  There are two places still calling GetQuery w/o regard to OD or Enterprise.  One for the forgot password section,
 // and one for the load section.  The load section needs to be rewritten to use the data from the login (if possible) or
 // to use a separate function to get user data.  Maybe not load data on login?
@@ -15,8 +15,11 @@ function netforum_authentication_init() {
     drupal_add_link($_SESSION['netforum_auth_link']);
     unset($_SESSION['netforum_auth_link']);
   }
+  
+  // Only one of these should actually ever do anything.
+  netforum_auth_user_logout_by_cookie();
+  netforum_auth_user_login_by_cookie();
 }
-
 
 /**
  * Implements hook_menu().
@@ -275,19 +278,19 @@ function netforum_auth_admin_settings() {
     '#type' => 'item',
     '#description' => t('If the settings above are not working properly try ' . l(t('clearing the menu cache'), 'admin/config/netforum/clearcache')),
   );
+  
+  $form['sso'] = array(
+    '#title' => "Single Sign On settings",
+    '#type' => 'fieldset',
+  );  
 
   //Enterprise only
   if (netforum_is_enterprise()) {
-    $form['sso'] = array(
-      '#title' => "Single Sign On settings",
-      '#type' => 'fieldset',
-      '#description' => t("Which eWeb sites should a user automatically be logged on to when logged in to drupal?"),
-    );
 
     $form['sso']['netforum_auth_eweb_sso'] = array(
       '#title' => t('eWeb Sites'),
       '#type' => 'checkboxes',
-      '#description' => t('Select all to log users onto every eweb site in netFORUM or pick only the sites you want'),
+      '#description' => t('Which eWeb sites should a user automatically be logged on to when logged in to drupal?  Select all to log users onto every eweb site in netFORUM or pick only the sites you want'),
       '#options' => array_merge(array('ALL' => 'All eweb sites'), netforum_auth_eweb_sites()),
       '#default_value' => variable_get('netforum_auth_eweb_sso', array()),
     );
@@ -367,16 +370,22 @@ function netforum_auth_admin_settings() {
       '#default_value' => variable_get('netforum_auth_shared_sso_url', ''),
       '#size' => 40,
     );
-    
-    $form['sso']['netforum_sso_web_login'] = array(
-      '#title' => t('Allow SSO by redirecting to this site after eWeb Login'),
-      '#type' => 'checkbox',
-      '#description' => t("If users are entering their username and password on another site, they can be redirected to /netforum_sso_web_login with 'WebLoginKey' and 'destination' as queiry params to be logged in and optionall redirected after login."),
-      '#default_value' => variable_get('netforum_sso_web_login', 0),
-    );
-    
   }
-
+    
+  $form['sso']['netforum_sso_web_login'] = array(
+    '#title' => t('Allow SSO by redirecting to this site after eWeb Login'),
+    '#type' => 'checkbox',
+    '#description' => t("If users are entering their username and password on another site, they can be redirected to /netforum_sso_web_login with 'WebLoginKey' and 'destination' as queiry params to be logged in and optionall redirected after login."),
+    '#default_value' => variable_get('netforum_sso_web_login', 0),
+  );
+  
+  $form['sso']['netforum_sso_web_login_by_cookie'] = array(
+    '#title' => t('Allow SSO by writing a cookie with a WebLoginKey'),
+    '#type' => 'textfield',
+    '#description' => t("Drupal can check for a cookie with the above key, and if it contains a valid WebLoginKey the user will be logged in to the Drupal site.  For example, setting it to netFORUMToken would cause Drupal to check for a valid WebLoginKey under that name."),
+    '#default_value' => variable_get('netforum_sso_web_login_by_cookie', ''),
+  );
+  
   return system_settings_form($form);
 }
 
@@ -996,7 +1005,6 @@ function netforum_authentication_user_logout($account) {
   if (netforum_is_empty_guid($account->cst_key) === false) {
     netforum_auth_eweb_sso_logout();
     unset($_SESSION['_netforum_auth_eweb_pw']);
-    session_destroy();
   }
 }
 
@@ -1532,22 +1540,18 @@ function netforum_auth_od_sso_transfer($loc = "") {
   drupal_goto($external);
 }
 
+/**
+ * A menu callback to log a user in, requires the admin configuration to enable logins via redirect
+ * and expects WebLoginKey to be in the GET params.
+ */
 function netforum_auth_from_web_login_key(){
   if (variable_get('netforum_sso_web_login', 0) == 1){
     if (netforum_is_valid_guid($_GET['WebLoginKey'])){
-      $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $_GET['WebLoginKey']));
-      if (is_null($result) === false && isset($result->WebValidateResult) === true ) {
-        $cst_key =  (string) $result->WebValidateResult;
-        if (netforum_is_valid_guid($cst_key)){
-          $nf_customer_data = _netforum_auth_fetch_customer_matching_query("cst_key = '$cst_key'");
-      
-          if (empty($nf_customer_data) === false ) {
-            $account = netforum_auth_find_or_create_user_by_email($nf_customer_data['mail'], $nf_customer_data); 
-            // Log user in.
-            $form_state['uid'] = $account->uid;
-            user_login_submit(array(), $form_state);
-          }        
-        }
+      $account = netforum_auth_by_web_login_key($_GET['WebLoginKey']);
+      if (is_null($account) === false) {
+        // Log user in.
+        $form_state['uid'] = $account->uid;
+        user_login_submit(array(), $form_state);
       }
     }
   }
@@ -1567,6 +1571,35 @@ function netforum_auth_from_web_login_key(){
   }
   drupal_goto($destination);
 }
+
+/**
+ * Validate a key using WebValidate, this will find or create the user
+ *
+ * @param $key
+ *    A string representing the WebLoginKey that will be passed to the xWeb WebValidate method
+ * @return
+ *    The new user account if validation passes.
+ */
+function netforum_auth_by_web_login_key($key) {
+  $account = null;
+  if (netforum_is_valid_guid($key)){
+    $result = netforum_xweb_request("WebValidate", array("authenticationToken" => $key));
+    if (is_null($result) === false && isset($result->WebValidateResult) === true ) {
+      $cst_key =  (string) $result->WebValidateResult;
+      if (netforum_is_valid_guid($cst_key)){
+        $nf_customer_data = _netforum_auth_fetch_customer_matching_query("cst_key = '$cst_key'");
+    
+        if (empty($nf_customer_data) === false ) {
+          $account = netforum_auth_find_or_create_user_by_email($nf_customer_data['mail'], $nf_customer_data); 
+        }        
+      }
+    }
+  }
+  
+  return $account;
+  
+}
+
 
 /**
  * Returns the modified md5 hash that will match the cst_web_password field from netFORUM
@@ -1777,6 +1810,42 @@ function netforum_auth_user_login_validate(&$form, &$form_state) {
     user_login_authenticate_validate($form, $form_state);
   }
   
+}
+
+/**
+ * Log a user in if there is a cookie set with the web login token
+ */
+function netforum_auth_user_login_by_cookie(){
+  $cookie_key = variable_get('netforum_sso_web_login_by_cookie','');
+  if (user_is_anonymous() && $cookie_key != '' && array_key_exists($cookie_key, $_COOKIE)){
+    $web_login_key = $_COOKIE[$cookie_key];
+    if (netforum_is_valid_guid($web_login_key)) {
+      $account = netforum_auth_by_web_login_key($web_login_key);
+      if (is_null($account) == false) {
+        // Log user in.
+        $form_state['uid'] = $account->uid;
+        user_login_submit(array(), $form_state);
+        $_SESSION['_netforum_auth_did_login_by_cookie'] = true;   
+      }
+    }
+  }
+}
+
+/**
+ * Log a user out if the cookie is no longer present.
+ */
+function netforum_auth_user_logout_by_cookie(){
+  global $user;
+  $cookie_key = variable_get('netforum_sso_web_login_by_cookie','');
+  if (isset($user->cst_key) 
+      && netforum_is_empty_guid($user->cst_key) === false 
+      && $cookie_key != ''
+      && $_SESSION['_netforum_auth_did_login_by_cookie'] === true
+      && netforum_is_valid_guid($_COOKIE[$cookie_key]) === false
+  ){
+    session_start();
+    user_logout();
+  }
 }
 
 
