@@ -1573,7 +1573,8 @@ function netforum_auth_from_web_login_key(){
 }
 
 /**
- * Validate a key using WebValidate, this will find or create the user
+ * Validate a key using WebValidate, this will find or create the user.  If the user exists but has no
+ * netforum information the user's information will be updated with the netforum data.
  *
  * @param $key
  *    A string representing the WebLoginKey that will be passed to the xWeb WebValidate method
@@ -1588,10 +1589,18 @@ function netforum_auth_by_web_login_key($key) {
       $cst_key =  (string) $result->WebValidateResult;
       if (netforum_is_valid_guid($cst_key)){
         $nf_customer_data = _netforum_auth_fetch_customer_matching_query("cst_key = '$cst_key'");
-    
+        
         if (empty($nf_customer_data) === false ) {
           $account = netforum_auth_find_or_create_user_by_email($nf_customer_data['mail'], $nf_customer_data); 
-        }        
+          if (netforum_is_valid_guid($account->cst_key) === false){
+            $new_info = array(
+              'cst_key' => $nf_customer_data['cst_key'],
+              'cst_type' => $nf_customer_data['cst_type'],
+              'cst_id' => $nf_customer_data['cst_id'],
+            );
+            user_save($account, $new_info);
+          }
+        }
       }
     }
   }
@@ -1843,7 +1852,6 @@ function netforum_auth_user_logout_by_cookie(){
       && $_SESSION['_netforum_auth_did_login_by_cookie'] === true
       && netforum_is_valid_guid($_COOKIE[$cookie_key]) === false
   ){
-    session_start();
     user_logout();
   }
 }
