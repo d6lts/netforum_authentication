@@ -14,11 +14,23 @@ function netforum_authentication_init() {
   if (isset($_SESSION['netforum_auth_link'])) {
     drupal_add_link($_SESSION['netforum_auth_link']);
     unset($_SESSION['netforum_auth_link']);
-  }
+  }  
+}
+
+
+/**
+ * Implements node_access to try and make sure there is a user when checking
+ * menu callbacks
+ */
+function netforum_authentication_custom_theme() {
+  // see https://drupal.org/node/928160 for some background, but the point is to run before 
+  // any menus check access.
   
   // Only one of these should actually ever do anything.
   netforum_auth_user_logout_by_cookie();
   netforum_auth_user_login_by_cookie();
+
+  return NULL;
 }
 
 /**
@@ -1004,7 +1016,9 @@ function netforum_authentication_user_login(&$edit, $account) {
 function netforum_authentication_user_logout($account) {
   if (netforum_is_empty_guid($account->cst_key) === false) {
     netforum_auth_eweb_sso_logout();
-    unset($_SESSION['_netforum_auth_eweb_pw']);
+    if (isset($_SESSION['_netforum_auth_eweb_pw'])) {
+      unset($_SESSION['_netforum_auth_eweb_pw']);
+    }
   }
 }
 
