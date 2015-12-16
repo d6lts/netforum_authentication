@@ -1494,8 +1494,9 @@ function netforum_auth_eweb_sso_logout() {
   }
   if (strtolower(variable_get('netforum_auth_sso_logout_url', '<drupal>')) != '<drupal>') {
     global $base_url;
-    $destination = &drupal_static(__FUNCTION__);
     $destination = variable_get('netforum_auth_sso_logout_url', '') . "?RedirectURL=$base_url";
+    session_destroy(); // since we're leaving Drupal, clear out the session before we go.
+    drupal_goto($destination);
   }
 }
 
