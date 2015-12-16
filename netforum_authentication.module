@@ -1015,10 +1015,10 @@ function netforum_authentication_user_login(&$edit, $account) {
  */
 function netforum_authentication_user_logout($account) {
   if (netforum_is_empty_guid($account->cst_key) === false) {
-    netforum_auth_eweb_sso_logout();
     if (isset($_SESSION['_netforum_auth_eweb_pw'])) {
       unset($_SESSION['_netforum_auth_eweb_pw']);
     }
+    netforum_auth_eweb_sso_logout();
   }
 }
 
@@ -1494,7 +1494,8 @@ function netforum_auth_eweb_sso_logout() {
   }
   if (strtolower(variable_get('netforum_auth_sso_logout_url', '<drupal>')) != '<drupal>') {
     global $base_url;
-    drupal_goto(variable_get('netforum_auth_sso_logout_url', '') . "?RedirectURL=$base_url");
+    $destination = &drupal_static(__FUNCTION__);
+    $destination = variable_get('netforum_auth_sso_logout_url', '') . "?RedirectURL=$base_url";
   }
 }
 
