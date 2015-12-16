@@ -1875,44 +1875,36 @@ function netforum_auth_user_logout_by_cookie(){
 /**
  * Implements hook_filter().
  *
- * used for netforum OD to rewrite links to the OD eWeb page for SSO
+ * used for netforum Pro to rewrite links to the Pro eWeb page for SSO
  */
- // TODO:  Update the filter to the new format
-function netforum_authentication_filter_XXX($op, $delta = 0, $format = -1, $text = '') {
-  if (netforum_is_team()) {
-    $od_domain = "netforumondemand.com";
+function netforum_authentication_filter_info() {
+  $filters['filter_netforumpro_sso'] = array(
+    'title' => t('netFORUM Pro SSO Filter'),
+    'description' => t("Intercept links to the netFORUM Pro eWeb pages to ensure that a user is logged in first, in effect creating SSO. Any link to netforumpro.com will be rewritten."),
+    'process callback' => '_netforum_authentication_filter_netforumpro_sso_process',
+    'cache' => FALSE
+  );
+  return $filters;
+}
 
-    switch ($op) {
-      case 'list':
-        return array(0 => t('netFORUM OnDemand SSO Filter'));
-
-      case 'description':
-        return t('Intercept links to the netFORUM OnDemand eWeb pages to ensure that a user is logged in first, in effect creating SSO.  Any link to !od_domain will be rewritten.', array('!od_domain' => $od_domain));
-
-      case 'prepare':
-        return $text;
-
-      case "process":
-        $searches = array();
-        $replacements = array();
-        $regexp = "/<a\s[^>]*href=([\"\']??)([^\" >]*?)\\1[^>]*>(.*)<\/a>/siU";
-        if (preg_match_all($regexp, $text, $matches, PREG_SET_ORDER)) {
-          foreach ($matches as $match) {
-            if (stristr($match[2], $od_domain)) {
-              $searches[] = $match[2];
-              $replacements[] = url('nf_od_sso_transfer/', array('query' => "loc=" . urlencode($match[2])));
-              // TODO:  Check the URL method to make sure this works.  The below is what the upgrade module replaced it with.
-              // $replacements[] = url('nf_od_sso_transfer/', array('query' => array('loc' => '')));
-            }
-          }
-          $text = str_replace($searches, $replacements, $text);
-        }
-        return $text;
-
-      default:
-        return $text;
+/**
+ * Netforum Pro SSO filter process callback.
+ */
+function _netforum_authentication_filter_netforumpro_sso_process($text, $filter) {
+  $od_domain = "netforumpro.com";
+  $searches = array();
+  $replacements = array();
+  $regexp = "/<a\s[^>]*href=([\"\']??)([^\" >]*?)\\1[^>]*>(.*)<\/a>/siU";
+  if (preg_match_all($regexp, $text, $matches, PREG_SET_ORDER)) {
+    foreach ($matches as $match) {
+      if (stristr($match[2], $od_domain)) {
+        $searches[] = 'href="' .$match[2] . '"';
+        $replacements[] = 'href="' . url('nf_od_sso_transfer/', array('query' => array('loc' => urlencode($match[2])))) . '"';
+      }
     }
+    $text = str_replace($searches, $replacements, $text);
   }
+  return $text;
 }
 
 /**
