@@ -1865,7 +1865,7 @@ function netforum_auth_user_logout_by_cookie(){
   if (isset($user->cst_key) 
       && netforum_is_empty_guid($user->cst_key) === false 
       && $cookie_key != ''
-      && (isset($_SESSION['_netforum_auth_did_login_by_cookie'])
+      && isset($_SESSION['_netforum_auth_did_login_by_cookie'])
       && $_SESSION['_netforum_auth_did_login_by_cookie'] === true
       && netforum_is_valid_guid($_COOKIE[$cookie_key]) === false
   ){
