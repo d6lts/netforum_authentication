@@ -1812,12 +1812,39 @@ function netforum_auth_user_login_validate(&$form, &$form_state) {
     // Another module has already handled authentication.
     return;
   }
-  
+
+  if (!flood_is_allowed('failed_login_attempt_ip', variable_get('user_failed_login_ip_limit', 50), variable_get('user_failed_login_ip_window', 3600))) {
+    $form_state['flood_control_triggered'] = 'ip';
+    return;
+  }
+
   $users_uid = db_query("SELECT uid FROM {users} WHERE name = :authname", array(':authname' => $form_state['values']['name']))->fetchField();
-  $external_uid = db_query("SELECT uid FROM {authmap} WHERE authname = :authname AND module='netforum_authentication'", 
-        array(':authname' => $form_state['values']['name'])
+  $external_uid = db_query("SELECT uid FROM {authmap} WHERE authname = :authname AND module='netforum_authentication'",
+    array(':authname' => $form_state['values']['name'])
   )->fetchField();
-  
+
+  if ($external_uid) {
+    if (variable_get('user_failed_login_identifier_uid_only', FALSE)) {
+      // Register flood events based on the uid only, so they apply for any
+      // IP address. This is the most secure option.
+      $identifier = $external_uid;
+    }
+    else {
+      // The default identifier is a combination of uid and IP address. This
+      // is less secure but more resistant to denial-of-service attacks that
+      // could lock out all users with public user names.
+      $identifier = $external_uid . '-' . ip_address();
+    }
+    $form_state['flood_control_user_identifier'] = $identifier;
+
+    // Don't allow login if the limit for this user has been reached.
+    // Default is to allow 5 failed attempts every 6 hours.
+    if (!flood_is_allowed('failed_login_attempt_user', variable_get('user_failed_login_user_limit', 5), variable_get('user_failed_login_user_window', 21600), $identifier)) {
+      $form_state['flood_control_triggered'] = 'user';
+      return;
+    }
+  }
+
   //Call our custom authentication function, a holdover from Drupal 5 that makes for easy porting.
   // Only run through it if the user is authenticated by this module, or if there is no user matching.
   if ((isset($external_uid) || !isset($users_uid)) && netforum_authentication_auth($form_state['values']['name'], $form_state['values']['pass'], '')) {
@@ -1826,7 +1853,7 @@ function netforum_auth_user_login_validate(&$form, &$form_state) {
     // We don't clobber the form validators which look for this in the form state.  Set it so that it
     // doesn't bomb.
     $form_state['uid'] = $user->uid;
-    $form['#submit'] = array(); // NOTE:  We took the form by reference and edited it here.  
+    $form['#submit'] = array(); // NOTE:  We took the form by reference and edited it here.
     // User user_external_login_register will call the submit method (user_login_submit) for us,
     // so clear it out to prevent it from continuing.
   }
@@ -1834,7 +1861,6 @@ function netforum_auth_user_login_validate(&$form, &$form_state) {
     //Fall back to the local validation
     user_login_authenticate_validate($form, $form_state);
   }
-  
 }
 
 /**
