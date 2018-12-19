@@ -596,7 +596,6 @@ function netforum_auth_shared_sso_login($cstid = '', $cstid_token = '', $pw_toke
         if (_netforum_auth_match_password_token($account->cst_web_password, $pw_token) ) {
           $account->name = $account->cst_id;
           $found_user = true;
-          break;
         }
       }
       else {
